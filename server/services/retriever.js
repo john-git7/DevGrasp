@@ -2,13 +2,12 @@ const Chunk = require('../models/Chunk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-const fallbackModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 
 async function retrieveContext(query, repoUrl = null) {
   try {
     // 1. Embed the query to get its 768-dimensional vector
-    const embeddingResult = await fallbackModel.embedContent(query);
+    const embeddingResult = await model.embedContent(query);
     const queryVector = embeddingResult.embedding.values;
 
     // 2. Perform vector search in MongoDB
@@ -19,8 +18,8 @@ async function retrieveContext(query, repoUrl = null) {
           index: 'Devmind', 
           path: 'embedding',
           queryVector: queryVector,
-          numCandidates: 100, // Get 100 candidates to filter down
-          limit: 100 // Temporarily get 100 so we can filter by repo
+          numCandidates: 1000, // Get 1000 candidates to filter down
+          limit: 1000 // Temporarily get 1000 so we can filter by repo efficiently
         }
       }
     ];

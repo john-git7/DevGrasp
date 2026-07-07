@@ -2,13 +2,16 @@ const { Octokit } = require('octokit');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Chunk = require('../models/Chunk');
 const RepoStatus = require('../models/RepoStatus');
+const usageTracker = require('./usageTracker');
+
+const activeJobs = {};
 
 // Setup Octokit and Gemini
 const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN }); // Authenticate to prevent strict rate limits
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
 
 // We will try text-embedding-004 first, but fallback to gemini-embedding-2 if it's a newer API key
-const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 const fallbackModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
 
 // Helper function to split text into chunks
@@ -30,7 +33,7 @@ function chunkText(text, maxChars = 1000) {
 }
 
 // Helper to handle 503 API High Demand errors
-async function executeWithRetry(apiCall, maxRetries = 3) {
+async function executeWithRetry(apiCall, onProgress, maxRetries = 3) {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
@@ -40,7 +43,20 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
       if ((error.status === 503 || error.status === 429) && attempt < maxRetries) {
         const waitTime = error.status === 429 ? 15000 : attempt * 5000;
         console.warn(`[${error.status}] Gemini API issue. Retrying attempt ${attempt} in ${waitTime/1000}s...`);
+        
+        if (onProgress) {
+          onProgress({ 
+            status: 'quota_wait', 
+            message: `API Quota Exceeded. Pausing for ${waitTime/1000}s...`,
+            waitTime: waitTime
+          });
+        }
+
         await new Promise(resolve => setTimeout(resolve, waitTime));
+        
+        if (onProgress) {
+          onProgress({ status: 'indexing_resumed', message: 'Resuming indexing...' });
+        }
       } else {
         throw error;
       }
@@ -87,6 +103,8 @@ async function indexRepository(repoUrl, onProgress = null) {
     files = files.filter(f => !alreadyIndexed.includes(f.path));
     let processedCount = totalFilesCount - files.length;
 
+    activeJobs[repoUrl] = { cancel: false };
+
     // Upsert the RepoStatus to 'indexing'
     await RepoStatus.findOneAndUpdate(
       { repoUrl },
@@ -106,6 +124,17 @@ async function indexRepository(repoUrl, onProgress = null) {
 
     // 3. Process each file
     for (const file of files) {
+      if (activeJobs[repoUrl]?.cancel) {
+        console.log(`Indexing paused for ${repoUrl}`);
+        await RepoStatus.findOneAndUpdate(
+          { repoUrl },
+          { status: 'paused', lastUpdated: Date.now() }
+        );
+        if (onProgress) onProgress({ status: 'paused', message: 'Indexing paused by user' });
+        delete activeJobs[repoUrl];
+        return;
+      }
+
       // Basic extension filter to avoid binaries and large assets
       const ext = file.path.split('.').pop();
       if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'pdf', 'zip', 'woff', 'woff2'].includes(ext)) continue;
@@ -134,7 +163,8 @@ async function indexRepository(repoUrl, onProgress = null) {
         const text = chunks[i];
         
         // 5. Generate Embedding
-        const embeddingResult = await executeWithRetry(() => fallbackModel.embedContent(text));
+        const embeddingResult = await executeWithRetry(() => model.embedContent(text), onProgress);
+        usageTracker.trackEmbeddingRequest();
         const embedding = embeddingResult.embedding.values;
 
         // 6. Save to MongoDB
@@ -166,13 +196,26 @@ async function indexRepository(repoUrl, onProgress = null) {
     await RepoStatus.updateOne({ repoUrl }, { status: 'complete', indexedFiles: totalFilesCount, lastUpdated: Date.now() });
 
     console.log(`Successfully indexed ${owner}/${repo}`);
+    if (onProgress) onProgress({ status: 'complete', repoUrl });
+    delete activeJobs[repoUrl];
     return { success: true, message: 'Indexing complete' };
   } catch (error) {
     console.error('Error during indexing:', error);
     // Mark as error
-    await RepoStatus.updateOne({ repoUrl }, { status: 'error', lastUpdated: Date.now() }).catch(e => console.error(e));
+    await RepoStatus.findOneAndUpdate(
+      { repoUrl },
+      { status: 'error', lastUpdated: Date.now() }
+    );
+    if (onProgress) onProgress({ status: 'error', error: error.message });
+    delete activeJobs[repoUrl];
     throw error;
   }
 }
 
-module.exports = { indexRepository };
+function cancelJob(repoUrl) {
+  if (activeJobs[repoUrl]) {
+    activeJobs[repoUrl].cancel = true;
+  }
+}
+
+module.exports = { indexRepository, cancelJob };

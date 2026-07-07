@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ChatMessage from './components/ChatMessage';
+import RepoModal from './components/RepoModal';
+import WorkspaceModal from './components/WorkspaceModal';
+import UsageWidget from './components/UsageWidget';
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -16,8 +19,12 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [isConversationsExpanded, setIsConversationsExpanded] = useState({});
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
+  const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
   const [viewingFile, setViewingFile] = useState(null);
+  
+  // Real-time usage tracking
+  const [usageStatus, setUsageStatus] = useState(null);
   const [isFileLoading, setIsFileLoading] = useState(false);
   
   // PR State
@@ -76,18 +83,73 @@ export default function App() {
     }
   };
 
-  useEffect(() => { fetchIndexedRepos(); }, []);
+  useEffect(() => { 
+    fetchIndexedRepos(); 
+    
+    // Poll for API usage metrics every 3 seconds
+    const fetchUsage = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/status/usage`);
+        if (res.ok) {
+          const data = await res.json();
+          setUsageStatus(data);
+        }
+      } catch (e) {
+        // fail silently
+      }
+    };
+    fetchUsage();
+    const usageInterval = setInterval(fetchUsage, 3000);
+    return () => clearInterval(usageInterval);
+  }, []);
 
-  const indexRepo = async (e) => {
-    e.preventDefault();
-    if (!repoUrl) return;
+  const pauseIndexing = async (url) => {
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/api/repos/pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      setIsIndexing(false);
+      fetchIndexedRepos();
+    } catch (e) {
+      console.error('Failed to pause indexing', e);
+    }
+  };
+
+  const deleteWorkspace = async (url) => {
+    if (!window.confirm("Are you sure you want to completely delete this workspace and all its data?")) return;
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) {
+        if (selectedRepo === url) {
+          setSelectedRepo(null);
+          setMessages([]);
+        }
+        fetchIndexedRepos();
+      } else {
+        alert("Failed to delete workspace");
+      }
+    } catch (e) {
+      console.error('Failed to delete workspace', e);
+    }
+  };
+
+  const indexRepo = async (e, specificUrl = null) => {
+    if (e) e.preventDefault();
+    const targetUrl = specificUrl || repoUrl;
+    if (!targetUrl) return;
     setIsIndexing(true);
     setIndexProgress(null);
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/index`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: repoUrl }),
+        body: JSON.stringify({ url: targetUrl }),
       });
       
       if (!response.ok) {
@@ -120,7 +182,12 @@ export default function App() {
                  fetchIndexedRepos();
                  return;
               }
-              setIndexProgress(data);
+              
+              setIndexProgress(prev => ({
+                ...prev,
+                ...data,
+                isWaiting: data.status === 'quota_wait'
+              }));
             } catch (err) {}
           }
         }
@@ -198,7 +265,43 @@ export default function App() {
     }
   };
 
-  // When repo changes, load history, reset chat, fetch PRs
+  const handleEditMessage = async (index, newContent) => {
+    if (isLoading) return;
+    
+    if (currentConversationId) {
+      try {
+        await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${currentConversationId}/truncate`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageIndex: index })
+        });
+      } catch(e) { console.error(e); }
+    }
+    
+    setMessages(prev => prev.slice(0, index));
+    sendMessage(null, newContent);
+  };
+
+  const handleRetryMessage = async (index) => {
+    if (isLoading) return;
+    const userMessageIndex = index - 1;
+    if (userMessageIndex < 0) return;
+    const oldContent = messages[userMessageIndex].content;
+    
+    if (currentConversationId) {
+      try {
+        await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${currentConversationId}/truncate`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageIndex: userMessageIndex })
+        });
+      } catch(e) { console.error(e); }
+    }
+    
+    setMessages(prev => prev.slice(0, userMessageIndex));
+    sendMessage(null, oldContent);
+  };
+
   useEffect(() => {
     if (selectedRepo) {
       fetchConversations(selectedRepo);
@@ -211,12 +314,12 @@ export default function App() {
     }
   }, [selectedRepo]);
 
-  const sendMessage = async (e) => {
+  const sendMessage = async (e, customText = null) => {
     if(e) e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    const userMessage = customText || input.trim();
+    if (!userMessage || isLoading) return;
 
-    const userMessage = input.trim();
-    setInput('');
+    if (!customText) setInput('');
     setIsLoading(true);
 
     // Add the user message immediately, before the API call!
@@ -549,15 +652,91 @@ export default function App() {
   }, [selectedRepo]);
 
   return (
-    <div className="flex h-[100dvh] bg-[#09090b] text-zinc-100 font-sans overflow-hidden">
+    <div className="flex flex-col h-[100dvh] bg-[var(--color-apple-bg)] text-zinc-100 font-sans overflow-hidden">
       
+      {/* Top Navigation Bar */}
+      <header className="flex-shrink-0 h-16 bg-[var(--color-apple-glass)] border-b border-[var(--color-apple-border)] flex items-center justify-between px-3 sm:px-6 z-20">
+        <div className="flex items-center gap-1 ">
+          <div className="w-15 h-15 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 bg-transparent">
+            <img src="/logo.png" alt="DevGrasp Logo" className="w-full h-full object-contain" />
+          </div>
+          <h1 className="text-lg sm:text-xl font-bold text-[var(--color-apple-text)] tracking-tight hidden sm:block">
+            DevGrasp
+          </h1>
+        </div>
+        
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="hidden md:block">
+            <UsageWidget />
+          </div>
+          <button
+            onClick={() => setIsWorkspaceModalOpen(true)}
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-2xl bg-[var(--color-apple-bg)] text-[var(--color-apple-text)] hover:bg-[var(--color-apple-bg)]/80 border border-[var(--color-apple-border)] transition-colors text-xs sm:text-sm font-bold truncate max-w-[140px] sm:max-w-xs"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 flex-shrink-0">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+            <span className="truncate hidden sm:inline">Workspace {selectedRepo ? `(${selectedRepo.split('/').slice(-2).join('/')})` : ''}</span>
+            <span className="truncate sm:hidden">{selectedRepo ? selectedRepo.split('/').slice(-2).join('/') : 'Workspace'}</span>
+          </button>
+          
+          <button
+            onClick={() => setIsRepoModalOpen(true)}
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-2xl bg-[var(--color-apple-blue)] text-[var(--color-apple-bg)] hover:bg-[var(--color-apple-blue)]/90 transition-colors text-xs sm:text-sm font-bold flex-shrink-0"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span className="hidden sm:inline">Add Repo</span>
+            <span className="sm:hidden">Add</span>
+          </button>
+        </div>
+      </header>
+
+      <RepoModal 
+        isOpen={isRepoModalOpen}
+        onClose={() => setIsRepoModalOpen(false)}
+        repoUrl={repoUrl}
+        setRepoUrl={setRepoUrl}
+        indexRepo={indexRepo}
+        isIndexing={isIndexing}
+        indexProgress={indexProgress}
+        pauseIndexing={pauseIndexing}
+        fetchIndexedRepos={fetchIndexedRepos}
+      />
+      
+      <WorkspaceModal 
+        isOpen={isWorkspaceModalOpen}
+        onClose={() => setIsWorkspaceModalOpen(false)}
+        indexedRepos={indexedRepos}
+        selectedRepo={selectedRepo}
+        setSelectedRepo={setSelectedRepo}
+        isConversationsExpanded={isConversationsExpanded}
+        setIsConversationsExpanded={setIsConversationsExpanded}
+        startNewChat={startNewChat}
+        generateOnboarding={generateOnboarding}
+        generateTechDebt={generateTechDebt}
+        generateCommitStory={generateCommitStory}
+        conversations={conversations}
+        currentConversationId={currentConversationId}
+        loadConversation={loadConversation}
+        deleteConversation={deleteConversation}
+        openPRs={openPRs}
+        setSelectedPR={setSelectedPR}
+        selectedPR={selectedPR}
+        pauseIndexing={pauseIndexing}
+        indexRepo={indexRepo}
+        deleteWorkspace={deleteWorkspace}
+        indexProgress={indexProgress}
+      />
+
       {/* File Viewer Modal */}
       {viewingFile && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 md:p-8">
           <div className="bg-[#18181b] border border-white/10 rounded-2xl shadow-2xl flex flex-col w-full max-w-5xl h-[85vh] max-h-[800px] overflow-hidden">
             <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-[#121214]">
               <div className="flex items-center gap-3 truncate">
-                <svg className="w-5 h-5 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5 text-[#0a84ff] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <h3 className="font-mono text-sm text-zinc-200 truncate">{viewingFile.path}</h3>
@@ -575,9 +754,9 @@ export default function App() {
               {isFileLoading && !viewingFile.content ? (
                 <div className="h-full flex flex-col items-center justify-center text-zinc-500">
                   <span className="inline-flex space-x-1 items-center animate-pulse">
-                    <span className="h-2 w-2 bg-indigo-500 rounded-full"></span>
-                    <span className="h-2 w-2 bg-purple-500 rounded-full"></span>
-                    <span className="h-2 w-2 bg-indigo-500 rounded-full"></span>
+                    <span className="h-2 w-2 bg-[#0a84ff] rounded-full"></span>
+                    <span className="h-2 w-2 bg-[#0a84ff] rounded-full"></span>
+                    <span className="h-2 w-2 bg-[#0a84ff] rounded-full"></span>
                   </span>
                   <p className="mt-4 text-xs font-medium">Loading file...</p>
                 </div>
@@ -590,290 +769,75 @@ export default function App() {
           </div>
         </div>
       )}
-      
-      {/* Mobile Sidebar Overlay Backdrop */}
-      {isMobileMenuOpen && (
-        <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        ></div>
-      )}
-
-      {/* Sidebar - Sleek & Modern */}
-      <aside className={`w-[280px] bg-[#09090b] border-r border-white/5 flex flex-col z-50 shrink-0 fixed inset-y-0 left-0 transition-transform duration-300 md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-5 flex justify-between items-center">
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-6 h-6 rounded bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
-              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <h1 className="text-lg font-bold text-zinc-100 tracking-tight">
-              DevMind
-            </h1>
-          </div>
-          {/* Close button for mobile */}
-          <button 
-            className="md:hidden text-zinc-400 hover:text-white"
-            onClick={() => setIsMobileMenuOpen(false)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="px-5 pb-4 border-b border-white/5 flex-shrink-0">
-          <p className="text-[10px] font-semibold text-zinc-500 mb-2 uppercase tracking-widest">Add Repository</p>
-          <form onSubmit={indexRepo} className="flex flex-col gap-2.5">
-            <input 
-              type="text" 
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              placeholder="github.com/user/repo"
-              className="bg-white/5 border border-white/10 rounded-md px-3 py-2 text-xs focus:outline-none focus:border-indigo-500/50 focus:bg-white/10 text-white w-full transition-all placeholder:text-zinc-600"
-            />
-            <button 
-              type="submit" 
-              disabled={isIndexing || !repoUrl}
-              className="bg-indigo-600/90 hover:bg-indigo-500 disabled:bg-white/5 disabled:text-zinc-600 text-white px-3 py-2 rounded-md text-xs font-medium transition-all w-full"
-            >
-              {isIndexing ? 'Indexing...' : 'Index Repository'}
-            </button>
-          </form>
-
-          {isIndexing && indexProgress && (
-            <div className="mt-3 p-2 bg-white/5 rounded-md border border-white/5">
-              <div className="flex justify-between mb-1.5 text-[10px]">
-                <span className="text-indigo-400 truncate pr-2">
-                  {indexProgress.status === 'fetching' ? 'Fetching...' : indexProgress.file}
-                </span>
-                <span className="text-zinc-500 font-mono">{indexProgress.current}/{indexProgress.total}</span>
-              </div>
-              <div className="w-full bg-black/40 rounded-full h-1 overflow-hidden">
-                <div 
-                  className="bg-indigo-500 h-1 rounded-full transition-all duration-300" 
-                  style={{ width: indexProgress.total > 0 ? `${(indexProgress.current / indexProgress.total) * 100}%` : '0%' }}
-                ></div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-3 py-4 no-scrollbar">
-          <p className="text-[10px] font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-widest">Workspaces</p>
-          {indexedRepos.length === 0 ? (
-            <p className="text-xs text-zinc-700 px-2 mt-4">No repositories indexed.</p>
-          ) : (
-            <div className="flex flex-col gap-1">
-              {indexedRepos.map(repoObj => {
-                // Support both old backend (strings) and new backend (objects)
-                const repo = typeof repoObj === 'string' ? repoObj : repoObj.repoUrl;
-                if (!repo) return null;
-                const repoName = repo.split('/').slice(-2).join('/');
-                const isSelected = selectedRepo === repo;
-                const isExpanded = isConversationsExpanded[repo];
-
-                return (
-                  <div key={repo}>
-                    <button 
-                      onClick={() => {
-                        setSelectedRepo(repo);
-                        setIsConversationsExpanded(prev => ({ ...prev, [repo]: !prev[repo] }));
-                      }}
-                      className={`w-full text-left px-3 py-2 rounded-md text-xs transition-all flex items-center justify-between group ${
-                        isSelected 
-                          ? 'border-l-2 border-[#1D9E75] bg-white/10 text-white font-bold' 
-                          : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200 font-medium'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <svg className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-[#1D9E75]' : 'text-zinc-600 group-hover:text-zinc-400'}`} viewBox="0 0 24 24" fill="currentColor">
-                          <path fillRule="evenodd" d="M3 6a3 3 0 013-3h12a3 3 0 013 3v12a3 3 0 01-3 3H6a3 3 0 01-3-3V6zm14.25 6a.75.75 0 01-.22.53l-2.25 2.25a.75.75 0 11-1.06-1.06L15.19 12l-1.47-1.47a.75.75 0 111.06-1.06l2.25 2.25c.141.14.22.331.22.53zm-3.28 4.72a.75.75 0 001.06-1.06l-4.5-4.5a.75.75 0 00-1.06 1.06l4.5 4.5z" clipRule="evenodd" />
-                        </svg>
-                        <span className="truncate">{repoName}</span>
-                      </div>
-                      {repoObj.status === 'indexing' && (
-                        <span className="flex-shrink-0 ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-400 animate-pulse" title="Still indexing files">INDEXING</span>
-                      )}
-                      {repoObj.status === 'error' && (
-                        <span className="flex-shrink-0 ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400" title="Index failed. Re-index to resume.">INCOMPLETE</span>
-                      )}
-                    </button>
-                    
-                    {/* Collapsible History */}
-                    {isSelected && isExpanded && (
-                      <div className="pl-6 pt-1 pb-2 flex flex-col gap-1 border-l border-white/5 ml-3 mt-1">
-                        <div className="flex flex-col gap-1 mb-2 border-b border-white/5 pb-2">
-                          <button 
-                            onClick={startNewChat}
-                            className={`text-left px-3 py-1.5 rounded-md text-[11px] font-medium transition-all text-zinc-400 hover:bg-white/5 hover:text-zinc-200 ${!currentConversationId ? 'bg-white/5 text-white' : ''}`}
-                          >
-                            + New Chat
-                          </button>
-                          <button 
-                            onClick={generateOnboarding}
-                            className={`text-left px-3 py-1.5 rounded-md text-[11px] font-bold transition-all text-indigo-400 hover:bg-indigo-500/10`}
-                          >
-                            📖 Generate Onboarding Guide
-                          </button>
-                          <button 
-                            onClick={generateTechDebt}
-                            className={`text-left px-3 py-1.5 rounded-md text-[11px] font-bold transition-all text-rose-400 hover:bg-rose-500/10`}
-                          >
-                            🚨 Tech Debt Radar
-                          </button>
-                          <button 
-                            onClick={generateCommitStory}
-                            className={`text-left px-3 py-1.5 rounded-md text-[11px] font-bold transition-all text-emerald-400 hover:bg-emerald-500/10`}
-                          >
-                            📜 Commit Story <span className="font-normal opacity-70">(last 20 commits)</span>
-                          </button>
-                        </div>
-                        {conversations.map(conv => (
-                          <div
-                            key={conv._id}
-                            className={`flex items-center justify-between px-2 py-1 rounded-md text-[11px] transition-all group ${
-                              currentConversationId === conv._id
-                                ? 'bg-indigo-500/10 text-indigo-300'
-                                : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                            }`}
-                          >
-                            <button
-                              onClick={() => loadConversation(conv._id)}
-                              className="flex-1 text-left truncate flex items-center justify-between mr-2 py-0.5"
-                            >
-                              <span className="truncate pr-2">{conv.title}</span>
-                              <span className="text-[9px] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                                {new Date(conv.createdAt).toLocaleDateString()}
-                              </span>
-                            </button>
-                            <button
-                              onClick={(e) => deleteConversation(conv._id, e)}
-                              className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 hover:bg-white/10 rounded transition-all flex-shrink-0"
-                              title="Delete chat"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                              </svg>
-                            </button>
-                          </div>
-                        ))}
-                        
-                        {/* Open PRs Section */}
-                        <div className="mt-2 pt-2 border-t border-white/5">
-                          <p className="text-[10px] font-semibold text-zinc-500 mb-2 uppercase tracking-widest px-2">Open PRs</p>
-                          {!openPRs[repo] ? (
-                            <p className="text-[10px] text-zinc-600 px-2">Loading PRs...</p>
-                          ) : openPRs[repo].length === 0 ? (
-                            <p className="text-[10px] text-zinc-600 px-2">No open PRs.</p>
-                          ) : (
-                            openPRs[repo].map(pr => (
-                              <button
-                                key={pr.number}
-                                onClick={() => {
-                                  setSelectedPR(pr);
-                                  startNewChat();
-                                }}
-                                className={`w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-all flex flex-col gap-0.5 group ${
-                                  selectedPR?.number === pr.number
-                                    ? 'bg-amber-500/10 text-amber-300'
-                                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between w-full">
-                                  <span className="font-bold truncate pr-2">#{pr.number}</span>
-                                  <span className="text-[9px] opacity-70">by {pr.author}</span>
-                                </div>
-                                <span className="truncate w-full">{pr.title}</span>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Model & System Info Panel */}
-        <div className="p-4 border-t border-white/5 bg-black/20 flex-shrink-0">
-          <div className="flex items-center justify-between text-[11px] text-zinc-500 font-medium">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#1D9E75] shadow-[0_0_8px_rgba(29,158,117,0.5)]"></span>
-              Gemini 3.5 Flash
-            </div>
-            <span className="font-mono">1M Tokens</span>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Chat Area - Radial Gradient Background */}
-      <main className="flex-1 flex flex-col min-h-0 relative bg-[#09090b] overflow-hidden w-full max-w-full">
-        {/* Mobile Header Toggle */}
-        <div className="md:hidden flex-shrink-0 px-4 py-3 border-b border-white/5 flex items-center gap-3 z-10 relative bg-[#09090b]">
-          <button 
-            className="text-zinc-400 hover:text-white"
-            onClick={() => setIsMobileMenuOpen(true)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-            </svg>
-          </button>
-          <span className="text-sm font-semibold text-zinc-200">DevMind</span>
-        </div>
-
-        {selectedRepo && (
-          <div className="flex-shrink-0 px-4 md:px-6 py-2.5 border-b border-white/5 flex items-center gap-2 z-10 relative">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#1D9E75]"></span>
-            <span className="text-xs text-zinc-400 font-mono truncate max-w-[200px] md:max-w-none">
-              {selectedRepo.split('/').slice(-2).join('/')}
-            </span>
-            <span className="ml-auto text-[10px] text-zinc-600 whitespace-nowrap">RAG enabled</span>
-          </div>
-        )}
-
-        {/* Subtle glow effect */}
-        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none"></div>
-        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-purple-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col min-h-0 relative overflow-hidden w-full max-w-full">
+        
 
         {/* Main Chat Content Area */}
         <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 pt-6 relative z-10">
           <div className="max-w-[780px] mx-auto w-full flex flex-col gap-4 min-h-full">
             
             {messages.length === 0 && (
-              <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 space-y-4 min-h-[60vh]">
-                <div className="w-12 h-12 border border-white/10 bg-white/5 backdrop-blur-md rounded-2xl flex items-center justify-center">
-                  <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                  </svg>
+              <div className="flex-1 flex flex-col items-start justify-center max-w-2xl mx-auto space-y-6 min-h-[60vh] px-4">
+                <h2 className="text-2xl font-bold text-[var(--color-apple-text)] tracking-tight">Welcome to DevGrasp</h2>
+                <div className="space-y-4 text-[13px] sm:text-sm text-[var(--color-apple-text)]/70 font-medium">
+                  <p>
+                    A contextual coding environment connected directly to your repositories.
+                  </p>
+                  <div className="mt-6">
+                    <h3 className="font-bold text-[var(--color-apple-text)] mb-2">Getting Started</h3>
+                    <ul className="list-disc list-inside space-y-1.5 ml-1">
+                      <li>Add a GitHub repository URL using the Add Repo button.</li>
+                      <li>Select your workspace to load the codebase context.</li>
+                      <li>Ask questions, debug issues, or generate code in the chat below.</li>
+                    </ul>
+                  </div>
+                  <div className="mt-6">
+                    <h3 className="font-bold text-[var(--color-apple-text)] mb-2">Capabilities</h3>
+                    <ul className="list-disc list-inside space-y-1.5 ml-1">
+                      <li>Vector-based context retrieval</li>
+                      <li>Interactive Pull Request reviews</li>
+                      <li>Automated codebase onboarding guides</li>
+                      <li>Architecture and tech debt analysis</li>
+                      <li>Historical commit story generation</li>
+                    </ul>
+                  </div>
                 </div>
-                <h2 className="text-lg font-medium text-zinc-300 tracking-tight">How can I help you code?</h2>
               </div>
             )}
 
-            {messages.map((msg, index) => (
-              <ChatMessage 
-                key={index} 
-                content={msg.content} 
-                role={msg.role} 
-                status={msg.status}
-                onCitationClick={handleCitationClick}
-              />
-            ))}
+            {messages.map((msg, index) => {
+              const isSpecialConversation = messages.length > 0 && (
+                messages[0].content?.includes('Generate a Tech Debt') ||
+                messages[0].content?.includes('Generate an onboarding guide') ||
+                messages[0].content?.includes('Generate a Commit Story')
+              );
+              
+              const disableEdit = isSpecialConversation && index === 0;
+              const disableRetry = isSpecialConversation && index === 1;
+
+              return (
+                <ChatMessage 
+                  key={index} 
+                  content={msg.content} 
+                  role={msg.role} 
+                  status={msg.status}
+                  onCitationClick={handleCitationClick}
+                  onEdit={disableEdit ? null : (newContent) => handleEditMessage(index, newContent)}
+                  onRetry={disableRetry ? null : () => handleRetryMessage(index)}
+                  isLatest={index === messages.length - 1}
+                />
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        {/* Input Bar - fixed height wrapper at bottom */}
-        <div className="flex-shrink-0 w-full px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 z-20 flex flex-col items-center gap-3 border-t border-white/5 bg-[#09090b]">
+        <div className="flex-shrink-0 w-full px-4 md:px-6 pb-4 md:pb-6 pt-3 md:pt-4 z-20 flex flex-col items-center gap-3 border-t border-[var(--color-apple-border)] bg-[var(--color-apple-glass)]">
 
           {/* PR Context Banner */}
           {selectedPR && (
-            <div className="max-w-2xl w-full flex items-center justify-between px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl animate-in slide-in-from-bottom-2 fade-in">
+            <div className="max-w-2xl w-full flex items-center justify-between px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-2xl animate-in slide-in-from-bottom-2 fade-in">
               <div className="flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
@@ -896,7 +860,7 @@ export default function App() {
 
           <form 
             onSubmit={sendMessage}
-            className="max-w-2xl w-full relative flex items-center glass-pill rounded-2xl md:rounded-3xl pointer-events-auto transition-all focus-within:border-indigo-500/30 focus-within:ring-4 focus-within:ring-indigo-500/10"
+            className="max-w-2xl w-full relative flex items-center apple-glass-pill rounded-2xl md:rounded-3xl pointer-events-auto transition-all focus-within:border-[var(--color-apple-text)]"
           >
              <div className="flex items-center pl-1 md:pl-2 pr-1 md:pr-2">
               {/* Voice Input Button */}
@@ -904,7 +868,7 @@ export default function App() {
                 type="button"
                 onClick={toggleListening}
                 title="Voice input"
-                className={`p-1.5 md:p-2 rounded-full transition-colors ${isListening ? 'text-red-400 bg-red-400/10' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'}`}
+                className={`p-1.5 md:p-2 rounded-full transition-colors ${isListening ? 'text-rose-400 bg-rose-400/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 md:w-5 md:h-5">
                   <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
@@ -917,7 +881,7 @@ export default function App() {
                 type="button"
                 onClick={() => setIsBugTraceMode(!isBugTraceMode)}
                 title="Bug Context Tracer Mode"
-                className={`p-1.5 md:p-2 rounded-full transition-colors ${isBugTraceMode ? 'text-indigo-400 bg-indigo-500/10' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'}`}
+                className={`p-1.5 md:p-2 rounded-full transition-colors ${isBugTraceMode ? 'text-[var(--color-apple-blue)] bg-[var(--color-apple-blue)]/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 md:w-5 md:h-5">
                   <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 01.67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 11-.671-1.34l.041-.022zM12 9a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
@@ -932,7 +896,7 @@ export default function App() {
                 disabled={isLoading}
                 placeholder="Paste your stack trace or error log here to trace the bug..."
                 rows="2"
-                className="flex-1 bg-transparent py-2.5 px-2 focus:outline-none text-indigo-200 placeholder-indigo-500/50 text-sm font-medium resize-none min-h-[60px]"
+                className="flex-1 bg-transparent py-2.5 px-2 focus:outline-none text-[var(--color-apple-text)] placeholder-[var(--color-apple-text)]/50 text-sm font-medium resize-none min-h-[60px]"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -946,8 +910,8 @@ export default function App() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={isLoading}
-                placeholder={isListening ? "Listening..." : "Message DevMind..."}
-                className="flex-1 bg-transparent py-3.5 px-2 focus:outline-none text-zinc-100 placeholder-zinc-500 text-sm font-medium"
+                placeholder={isListening ? "Listening..." : "Message DevGrasp..."}
+                className="flex-1 bg-transparent py-3.5 px-2 focus:outline-none text-[var(--color-apple-text)] placeholder-[var(--color-apple-text)]/50 text-sm font-medium"
               />
             )}
 
@@ -955,7 +919,7 @@ export default function App() {
               <button 
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="p-2 rounded-xl bg-white text-black hover:bg-zinc-200 disabled:bg-white/5 disabled:text-white/20 transition-colors shadow-sm"
+                className="p-2 rounded-2xl bg-[var(--color-apple-blue)] text-[var(--color-apple-bg)] hover:bg-[var(--color-apple-text)] disabled:bg-[var(--color-apple-blue)]/30 disabled:text-[var(--color-apple-text)]/30 transition-colors shadow-sm"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
                   <path d="M3.478 2.404a.75.75 0 00-.926.941l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.404z" />
@@ -965,7 +929,7 @@ export default function App() {
           </form>
           
           <div className="text-center mt-1 text-[10px] text-zinc-500 pointer-events-auto">
-            DevMind can make mistakes. Please verify important code.
+            DevGrasp can make mistakes. Please verify important code.
           </div>
         </div>
       </main>

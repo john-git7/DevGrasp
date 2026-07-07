@@ -1,12 +1,12 @@
-# DevMind 
+# DevGrasp 
 
 > An AI-powered developer productivity suite — ask your codebase questions, get automated PR reviews, convert screenshots to code, and speak to your repos.
 
 ---
 
-## What is DevMind?
+## What is DevGrasp?
 
-DevMind is a full-stack MERN application that indexes any GitHub repository and gives you an AI-powered interface to interact with it. Connect a repo and you get:
+DevGrasp is a full-stack MERN application that indexes any GitHub repository and gives you an AI-powered interface to interact with it. Connect a repo and you get:
 
 - **Codebase chat** — ask natural language questions, get answers with exact file citations
 - **Automated PR reviews** — AI reviews every pull request and posts structured comments directly to GitHub
@@ -80,7 +80,7 @@ DevMind is a full-stack MERN application that indexes any GitHub repository and 
          └─────────────────────┘
 ```
 
-### How RAG works in DevMind
+### How RAG works in DevGrasp
 
 ```
 User question
@@ -111,7 +111,7 @@ Stream via SSE        ← token-by-token to React frontend
 ## Project Structure
 
 ```
-devmind/
+devgrasp/
 ├── client/                     # React frontend
 │   ├── src/
 │   │   ├── components/
@@ -158,8 +158,8 @@ devmind/
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/yourusername/devmind.git
-cd devmind
+git clone https://github.com/yourusername/devgrasp.git
+cd devgrasp
 ```
 
 ### 2. Set up the backend

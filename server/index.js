@@ -7,6 +7,7 @@ const cors = require('cors');
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { Octokit } = require('@octokit/rest');
+const usageTracker = require('./services/usageTracker');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -28,7 +29,20 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
-      return await apiCall();
+      const result = await apiCall();
+      
+      // Track usage if it's a Gemini generate content call
+      if (result && result.response) {
+        result.response.then(res => {
+          const tokens = res.usageMetadata?.totalTokenCount || 0;
+          usageTracker.trackChatRequest(tokens);
+        }).catch(e => console.error('Error tracking usage:', e));
+      } else if (result && result.usageMetadata) { // non-stream
+        const tokens = result.usageMetadata.totalTokenCount || 0;
+        usageTracker.trackChatRequest(tokens);
+      }
+      
+      return result;
     } catch (error) {
       attempt++;
       if (error.status === 503 && attempt < maxRetries) {
@@ -62,7 +76,22 @@ function formatGeminiError(error, defaultMsg) {
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI, { family: 4 })
-  .then(() => console.log('Connected to MongoDB Atlas'))
+  .then(async () => {
+    console.log('Connected to MongoDB Atlas');
+    // Clean up any stale indexing states from previous server crashes
+    try {
+      const RepoStatus = require('./models/RepoStatus');
+      const result = await RepoStatus.updateMany(
+        { status: 'indexing' },
+        { status: 'error' } // Mark as INCOMPLETE so user can resume
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`Cleaned up ${result.modifiedCount} stale indexing states.`);
+      }
+    } catch(e) {
+      console.error('Failed to cleanup stale indexing states:', e);
+    }
+  })
   .catch((err) => console.error('MongoDB connection error:', err));
 
 const { retrieveContext } = require('./services/retriever');
@@ -142,7 +171,44 @@ app.delete('/api/chat/conversation/:id', async (req, res) => {
   }
 });
 
-// Day 1 & Day 3: Streaming Chat Endpoint with RAG Integration
+// Truncate a conversation history
+app.put('/api/chat/conversation/:id/truncate', async (req, res) => {
+  try {
+    const { messageIndex } = req.body;
+    if (typeof messageIndex !== 'number') return res.status(400).json({ error: 'messageIndex is required' });
+    
+    const convo = await Conversation.findById(req.params.id);
+    if (!convo) return res.status(404).json({ error: 'Not found' });
+    
+    convo.messages = convo.messages.slice(0, messageIndex);
+    await convo.save();
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to truncate conversation' });
+  }
+});
+
+// Delete a specific conversation
+app.delete('/api/repos/:owner/:repo', async (req, res) => {
+  const { owner, repo } = req.params;
+  try {
+    const repoUrl = `https://github.com/${owner}/${repo}`;
+    await Chunk.deleteMany({ repoUrl });
+    await RepoStatus.deleteOne({ repoUrl });
+    res.json({ success: true, message: 'Repository deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete repository' });
+  }
+});
+
+// GET usage metrics
+app.get('/api/status/usage', (req, res) => {
+  res.json(usageTracker.getUsage());
+});
+
+// Streaming Chat Endpoint with RAG Integration
 app.post('/api/chat', async (req, res) => {
   const { message, repoUrl, conversationId } = req.body;
   if (!message) return res.status(400).json({ error: 'Message is required' });
@@ -159,23 +225,35 @@ app.post('/api/chat', async (req, res) => {
     const context = await retrieveContext(message, repoUrl);
 
     // 2. Build the System Prompt
-    let prompt = message;
-    if (context) {
-      prompt = `You are DevMind, an expert AI coding assistant.
+    let systemPrompt = `You are DevGrasp, an expert AI coding assistant.
 You have access to the user's codebase. Use the following code snippets to answer the user's question accurately.
 If the answer is not in the snippets, just answer based on your general knowledge.
 
 Respond conversationally in plain paragraphs. Never use markdown headers (##), never use bullet points, keep answers under 150 words unless the user explicitly asks for detail. You are a chat assistant, not a documentation generator.
 
-At the very end of your response, you MUST include a special line starting with "__CITATIONS__:" followed by a comma-separated list of the file paths you used to answer the question. Do not include files you did not use.
+At the very end of your response, you MUST include a special line starting with "__CITATIONS__:" followed by a comma-separated list of the file paths you used to answer the question. Do not include files you did not use.`;
 
-${context}
-
-User's Question: ${message}`;
+    if (context) {
+      systemPrompt += `\n\n### Codebase Context ###\n${context}`;
     }
 
     let convoId = conversationId;
-    if (!convoId && repoUrl) {
+    let historyMessages = [];
+
+    if (convoId) {
+      // Fetch history BEFORE adding the current message
+      const convo = await Conversation.findById(convoId);
+      if (convo) {
+        historyMessages = convo.messages.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        }));
+      }
+      // Now save the current user message
+      await Conversation.findByIdAndUpdate(convoId, {
+        $push: { messages: { role: 'user', content: message } }
+      });
+    } else if (repoUrl) {
       const newConvo = new Conversation({
         repoId: repoUrl,
         title: message.substring(0, 40) + (message.length > 40 ? '...' : ''),
@@ -183,16 +261,20 @@ User's Question: ${message}`;
       });
       await newConvo.save();
       convoId = newConvo._id.toString();
-    } else if (convoId) {
-      await Conversation.findByIdAndUpdate(convoId, {
-        $push: { messages: { role: 'user', content: message } }
-      });
     }
+
+    const chat = model.startChat({
+      history: [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        { role: 'model', parts: [{ text: 'Understood. I have the context and instructions.' }] },
+        ...historyMessages
+      ]
+    });
 
     res.write(`data: ${JSON.stringify({ status: 'Generating response...' })}\n\n`);
 
     // 3. Generate the response with automatic retry for 503 errors
-    const result = await executeWithRetry(() => model.generateContentStream(prompt));
+    const result = await executeWithRetry(() => chat.sendMessageStream(message));
 
     // Send conversationId immediately so frontend knows it
     if (convoId) {
@@ -253,7 +335,7 @@ app.post('/api/chat/onboarding', async (req, res) => {
     if (readmeChunk) contextData += `README Context:\n${readmeChunk.content.substring(0, 1500)}\n\n`;
     if (packageJsonChunk) contextData += `Dependencies (package.json):\n${packageJsonChunk.content.substring(0, 1500)}\n\n`;
 
-    const prompt = `You are DevMind, a Senior Staff Engineer.
+    const prompt = `You are DevGrasp, a Senior Staff Engineer.
 A new developer just joined the team. Generate a comprehensive, living onboarding document for this codebase.
 Map out the high-level architecture, explain major modules based on the file tree, and summarize the core dependencies.
 Use Markdown with clear headers (##), bold text, and bullet points. Make it easy to read.
@@ -341,7 +423,7 @@ app.post('/api/chat/bug-trace', async (req, res) => {
       contextData = "No specific files identified from the stack trace.";
     }
 
-    const prompt = `You are DevMind, a Senior Debugging Engineer.
+    const prompt = `You are DevGrasp, a Senior Debugging Engineer.
 The user has provided a stack trace or error message. Your job is to trace the bug, explain WHY it is happening based on the provided codebase context, and trace the function calls.
 Do not just rewrite the code to fix it. Explain the underlying system failure.
 Use Markdown to format your response clearly.
@@ -420,7 +502,7 @@ app.post('/api/chat/tech-debt', async (req, res) => {
       fullContext = fullContext.substring(0, 4000000) + "\n\n...[TRUNCATED DUE TO SIZE]...";
     }
 
-    const prompt = `You are DevMind, a Senior Principal Engineer.
+    const prompt = `You are DevGrasp, a Senior Principal Engineer.
 Your task is to act as a "Tech Debt Radar". Analyze the provided codebase and generate a prioritized tech debt report.
 Look for:
 - Duplicated logic
@@ -551,7 +633,7 @@ app.post('/api/chat/commit-story', async (req, res) => {
       commitHistoryText += `\n----------------------------------\n\n`;
     }
 
-    const prompt = `You are DevMind, a Senior Technical Writer and Architect.
+    const prompt = `You are DevGrasp, a Senior Technical Writer and Architect.
 I am providing you with the last ${commitCount} commits and diffs from the repository ${owner}/${repo}.
 Your task is to generate a human-readable "Commit Story" (Changelog & Architecture Decision Record).
 Synthesize the technical changes into a cohesive narrative about what the team has been building, why they built it, and what major refactors or new features were introduced.
@@ -682,7 +764,7 @@ app.post('/api/chat/pr-review', async (req, res) => {
       parts: [{ text: msg.content }]
     }));
 
-    const systemPrompt = `You are DevMind, an expert Code Reviewer.
+    const systemPrompt = `You are DevGrasp, an expert Code Reviewer.
 The user is asking you about Pull Request #${prNumber} in ${owner}/${repoName}.
 I am providing you with the unified diff of the PR, and the current state of the modified files in the main branch (to help check for merge conflicts or issues).
 

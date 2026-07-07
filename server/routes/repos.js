@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { indexRepository } = require('../services/indexer');
+const { indexRepository, cancelJob } = require('../services/indexer');
 const Chunk = require('../models/Chunk');
 const RepoStatus = require('../models/RepoStatus');
 
@@ -17,7 +17,7 @@ router.get('/indexed', async (req, res) => {
     }
 
     // Get unique repos and their statuses
-    const repos = await RepoStatus.find({}, 'repoUrl status indexedFiles totalFiles').sort({ lastUpdated: -1 }).lean();
+    const repos = await RepoStatus.find({}, 'repoUrl status indexedFiles totalFiles lastUpdated').sort({ lastUpdated: -1 }).lean();
     res.json(repos);
   } catch (error) {
     console.error(error);
@@ -41,6 +41,15 @@ router.get('/file', async (req, res) => {
   }
 });
 
+// Pause indexing for a repository
+router.post('/pause', (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  
+  cancelJob(url);
+  res.json({ success: true, message: 'Pause signal sent' });
+});
+
 router.post('/index', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'GitHub URL is required' });
@@ -60,6 +69,31 @@ router.post('/index', async (req, res) => {
     console.error(error);
     res.write(`data: ${JSON.stringify({ status: 'error', error: error.message || 'Failed to index repository' })}\n\n`);
     res.end();
+  }
+});
+
+// Delete a repository workspace and all its data
+router.delete('/delete', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+
+  try {
+    const Conversation = require('../models/Conversation');
+    
+    // Stop any active indexing jobs
+    cancelJob(url);
+
+    // Delete all related records
+    await Promise.all([
+      Chunk.deleteMany({ repoUrl: url }),
+      RepoStatus.deleteOne({ repoUrl: url }),
+      Conversation.deleteMany({ repoId: url })
+    ]);
+
+    res.json({ success: true, message: 'Workspace deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting workspace:', error);
+    res.status(500).json({ error: 'Failed to delete workspace' });
   }
 });
 

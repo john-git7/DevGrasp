@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 
-const ChatMessage = React.memo(({ content, role, onCitationClick, status }) => {
+const ChatMessage = React.memo(({ content, role, onCitationClick, status, onEdit, onRetry, isLatest }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(content);
+
   let displayText = content;
   let citations = [];
   const isUser = role === 'user';
@@ -17,63 +20,127 @@ const ChatMessage = React.memo(({ content, role, onCitationClick, status }) => {
     }
   }
 
+  const handleSaveEdit = () => {
+    if (editContent.trim() && editContent !== content) {
+      onEdit(editContent);
+    }
+    setIsEditing(false);
+  };
+
   return (
-    <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'} group relative`}>
       <div 
-        className={`max-w-[85%] rounded-2xl px-5 py-4 ${
+        className={`max-w-[85%] w-full sm:w-auto rounded-2xl px-5 py-4 relative ${
           isUser 
-            ? 'bg-[#18181b] text-zinc-900 rounded-br-sm shadow-sm font-medium' 
-            : 'bg-[#18181b] border border-white/5 text-zinc-300 rounded-bl-sm shadow-md'
+            ? 'bg-[var(--color-apple-glass)] text-[var(--color-apple-text)] rounded-br-sm shadow-sm font-bold' 
+            : 'bg-[var(--color-apple-bg)] border border-[var(--color-apple-border)]/30 text-[var(--color-apple-text)] rounded-bl-sm shadow-md'
         }`}
       >
-
-        <div className="text-sm leading-relaxed prose prose-invert max-w-none">
-          {displayText ? (
-            <ReactMarkdown 
-              rehypePlugins={[rehypeHighlight]}
-              components={{
-                code({className, children, ...props}) {
-                  const isInline = !className;
-                  if (isInline) {
-                    return (
-                      <code className="bg-black/40 text-indigo-300 font-mono px-1.5 py-0.5 rounded border border-white/5" {...props}>
-                        {children}
-                      </code>
-                    );
-                  }
-                  return <code className={className} {...props}>{children}</code>;
-                }
-              }}
-            >
-              {displayText}
-            </ReactMarkdown>
-          ) : (
-            <div className="flex items-center gap-3 py-1">
-              <span className="inline-flex space-x-1 items-center animate-pulse">
-                <span className="h-1.5 w-1.5 bg-indigo-500 rounded-full"></span>
-                <span className="h-1.5 w-1.5 bg-purple-500 rounded-full"></span>
-                <span className="h-1.5 w-1.5 bg-indigo-500 rounded-full"></span>
-              </span>
-              <span className="text-xs font-mono text-zinc-400 animate-pulse">{status || 'Thinking...'}</span>
-            </div>
-          )}
-        </div>
         
-        {citations.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-white/5">
-            <p className="text-[10px] text-zinc-500 mb-2 font-semibold uppercase tracking-wider">Sources Cited</p>
-            <div className="flex flex-wrap gap-2">
-              {citations.map((cite, idx) => (
-                <button 
-                  key={idx}
-                  onClick={() => onCitationClick && onCitationClick(cite)}
-                  className="px-2 py-1 bg-white/5 border border-white/5 text-indigo-300 rounded-md text-[11px] font-mono break-all hover:bg-white/10 hover:text-indigo-200 transition-colors cursor-pointer text-left"
-                >
-                  {cite}
-                </button>
-              ))}
+        {isUser && !isEditing && onEdit && (
+          <button 
+            onClick={() => setIsEditing(true)}
+            className="absolute -left-10 top-2 opacity-0 group-hover:opacity-100 p-2 text-zinc-400 hover:text-white transition-opacity bg-[var(--color-apple-glass)] rounded-full border border-[var(--color-apple-border)]"
+            title="Edit message"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+            </svg>
+          </button>
+        )}
+
+        {isEditing ? (
+          <div className="flex flex-col gap-3 w-full min-w-[250px] sm:min-w-[400px]">
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              className="w-full bg-[var(--color-apple-bg)] text-[var(--color-apple-text)] border border-[var(--color-apple-border)] rounded-xl p-3 text-sm focus:outline-none focus:border-[var(--color-apple-blue)] resize-none min-h-[100px]"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button 
+                onClick={() => {
+                  setEditContent(content);
+                  setIsEditing(false);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveEdit}
+                className="px-3 py-1.5 text-xs font-semibold bg-[var(--color-apple-blue)] text-white rounded-lg hover:bg-[var(--color-apple-blue-hover)] transition-colors"
+              >
+                Save & Submit
+              </button>
             </div>
           </div>
+        ) : (
+          <>
+            <div className="text-sm leading-relaxed prose prose-invert max-w-none">
+              {displayText ? (
+                <ReactMarkdown 
+                  rehypePlugins={[rehypeHighlight]}
+                  components={{
+                    code({className, children, ...props}) {
+                      const isInline = !className;
+                      if (isInline) {
+                        return (
+                          <code className="bg-[var(--color-apple-bg)] text-[var(--color-apple-blue)] font-mono px-1.5 py-0.5 rounded border border-[var(--color-apple-border)]/30" {...props}>
+                            {children}
+                          </code>
+                        );
+                      }
+                      return <code className={className} {...props}>{children}</code>;
+                    }
+                  }}
+                >
+                  {displayText}
+                </ReactMarkdown>
+              ) : (
+                <div className="flex items-center gap-3 py-1">
+                  <span className="inline-flex space-x-1 items-center animate-pulse">
+                    <span className="h-1.5 w-1.5 bg-[var(--color-apple-blue)] rounded-full"></span>
+                    <span className="h-1.5 w-1.5 bg-[var(--color-apple-glass)] rounded-full"></span>
+                    <span className="h-1.5 w-1.5 bg-[var(--color-apple-blue)] rounded-full"></span>
+                  </span>
+                  <span className="text-xs font-mono text-[var(--color-apple-text)]/70 animate-pulse">{status || 'Thinking...'}</span>
+                </div>
+              )}
+            </div>
+            
+            {citations.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-[var(--color-apple-border)]">
+                <p className="text-[10px] text-[var(--color-apple-text)]/50 mb-2 font-semibold uppercase tracking-wider">Sources Cited</p>
+                <div className="flex flex-wrap gap-2">
+                  {citations.map((cite, idx) => (
+                    <button 
+                      key={idx}
+                      onClick={() => onCitationClick && onCitationClick(cite)}
+                      className="px-2 py-1 bg-[var(--color-apple-glass)]/50 border border-[var(--color-apple-border)]/30 text-[var(--color-apple-text)] rounded-md text-[11px] font-mono break-all hover:bg-[var(--color-apple-glass)] hover:text-[var(--color-apple-text)] transition-colors cursor-pointer text-left"
+                    >
+                      {cite}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!isUser && isLatest && onRetry && displayText && (
+              <div className="mt-4 pt-3 border-t border-[var(--color-apple-border)] flex justify-end">
+                <button
+                  onClick={onRetry}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-transparent hover:bg-[var(--color-apple-glass)] text-zinc-400 hover:text-white border border-transparent hover:border-[var(--color-apple-border)] rounded-lg text-xs font-medium transition-all"
+                  title="Retry response"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  Retry
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
