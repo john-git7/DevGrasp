@@ -6,23 +6,54 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { Octokit } = require('@octokit/rest');
+const { Octokit } = require('octokit');
 const usageTracker = require('./services/usageTracker');
+const { requireApiKey } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+const authRoute = require('./routes/auth');
 const reposRoute = require('./routes/repos');
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Auth routes (unprotected inside)
+app.use('/api/auth', authRoute);
+
+// Apply API key authentication to all /api routes
+app.use('/api', requireApiKey);
+
 app.use('/api/repos', reposRoute);
 
 // Initialize Gemini
 // Notice we use GEMINI_KEY from the .env file
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
+
+// Whitelist of valid model names to prevent arbitrary model injection
+const ALLOWED_MODELS = new Set([
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-pro-preview',
+  'gemini-embedding-001',
+  'gemini-embedding-2',
+]);
+
+function getChatModel(modelName) {
+  if (!modelName || modelName.includes('1.5')) return 'gemini-3.5-flash';
+  if (modelName === 'gemini-3.1-pro' || modelName === 'gemini-3.5-pro') return 'gemini-3.1-pro-preview';
+  // Only allow whitelisted models to prevent arbitrary model injection from clients
+  if (!ALLOWED_MODELS.has(modelName)) {
+    console.warn(`[SECURITY] Rejected unknown model: '${modelName}'. Falling back to gemini-3.5-flash.`);
+    return 'gemini-3.5-flash';
+  }
+  return modelName;
+}
 
 // Helper to handle 503 API High Demand errors
 async function executeWithRetry(apiCall, maxRetries = 3) {
@@ -45,9 +76,22 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
       return result;
     } catch (error) {
       attempt++;
-      if (error.status === 503 && attempt < maxRetries) {
-        console.warn(`[503 Service Unavailable] Gemini API high demand. Retrying attempt ${attempt} in ${attempt * 2}s...`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      if ((error.status === 503 || error.status === 429) && attempt < maxRetries) {
+        let waitTime = attempt * 2000;
+        if (error.status === 429) {
+          if (error.message && error.message.includes('limit: 0')) {
+            error.isZeroLimit = true;
+            throw error;
+          }
+          const match = error.message && error.message.match(/Please retry in ([\d\.]+)s/);
+          if (match) {
+            waitTime = Math.ceil(parseFloat(match[1])) * 1000 + 2000;
+          } else {
+            waitTime = 10000 * attempt;
+          }
+        }
+        console.warn(`[${error.status}] Gemini API issue. Retrying attempt ${attempt} in ${waitTime/1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         throw error;
       }
@@ -56,9 +100,12 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
 }
 
 // Helper to format API errors nicely for the UI
-function formatGeminiError(error, defaultMsg) {
+function formatGeminiError(error, defaultMsg, modelName = 'Unknown') {
   if (error.status === 429) {
-    let msg = 'Gemini API Quota Exceeded (429).';
+    if (error.isZeroLimit) {
+      return `The model '${modelName}' requires a paid Google AI API tier and has a Free Tier limit of 0 tokens. Please go to Settings and switch to a standard model like Gemini 3.5 Flash.`;
+    }
+    let msg = `Gemini API Quota Exceeded (429) for model '${modelName}'.`;
     // Try to extract the retry delay if provided by the API
     const retryInfo = error.errorDetails?.find(d => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
     if (retryInfo && retryInfo.retryDelay) {
@@ -139,7 +186,7 @@ app.get('/api/chat/history', async (req, res) => {
   const { repoId } = req.query;
   if (!repoId) return res.status(400).json({ error: 'repoId is required' });
   try {
-    const conversations = await Conversation.find({ repoId }).sort({ createdAt: -1 });
+    const conversations = await Conversation.find({ repoId, userId: req.user.id }).sort({ createdAt: -1 });
     res.json(conversations);
   } catch (err) {
     console.error(err);
@@ -150,7 +197,7 @@ app.get('/api/chat/history', async (req, res) => {
 // Fetch a specific conversation
 app.get('/api/chat/conversation/:id', async (req, res) => {
   try {
-    const conversation = await Conversation.findById(req.params.id);
+    const conversation = await Conversation.findOne({ _id: req.params.id, userId: req.user.id });
     if (!conversation) return res.status(404).json({ error: 'Not found' });
     res.json(conversation);
   } catch (err) {
@@ -162,7 +209,7 @@ app.get('/api/chat/conversation/:id', async (req, res) => {
 // Delete a specific conversation
 app.delete('/api/chat/conversation/:id', async (req, res) => {
   try {
-    const deleted = await Conversation.findByIdAndDelete(req.params.id);
+    const deleted = await Conversation.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
@@ -177,7 +224,7 @@ app.put('/api/chat/conversation/:id/truncate', async (req, res) => {
     const { messageIndex } = req.body;
     if (typeof messageIndex !== 'number') return res.status(400).json({ error: 'messageIndex is required' });
     
-    const convo = await Conversation.findById(req.params.id);
+    const convo = await Conversation.findOne({ _id: req.params.id, userId: req.user.id });
     if (!convo) return res.status(404).json({ error: 'Not found' });
     
     convo.messages = convo.messages.slice(0, messageIndex);
@@ -210,8 +257,14 @@ app.get('/api/status/usage', (req, res) => {
 
 // Streaming Chat Endpoint with RAG Integration
 app.post('/api/chat', async (req, res) => {
-  const { message, repoUrl, conversationId } = req.body;
-  if (!message) return res.status(400).json({ error: 'Message is required' });
+  let { message, repoUrl, conversationId, chatModel, embeddingModel } = req.body;
+  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
+
+  // Sanitize: trim whitespace and enforce max length to prevent quota abuse / prompt injection
+  message = message.trim().substring(0, 8000);
+  if (!message) return res.status(400).json({ error: 'Message cannot be empty' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -222,7 +275,10 @@ app.post('/api/chat', async (req, res) => {
     res.write(`data: ${JSON.stringify({ status: 'Searching your repository...' })}\n\n`);
     
     // 1. Retrieve relevant code context from MongoDB, filtering by selected repo if provided
-    const context = await retrieveContext(message, repoUrl);
+    let context = '';
+    if (repoUrl) {
+      context = await retrieveContext(message, repoUrl, embeddingModel);
+    }
 
     // 2. Build the System Prompt
     let systemPrompt = `You are DevGrasp, an expert AI coding assistant.
@@ -255,6 +311,7 @@ At the very end of your response, you MUST include a special line starting with 
       });
     } else if (repoUrl) {
       const newConvo = new Conversation({
+        userId: req.user.id,
         repoId: repoUrl,
         title: message.substring(0, 40) + (message.length > 40 ? '...' : ''),
         messages: [{ role: 'user', content: message }]
@@ -313,8 +370,10 @@ At the very end of your response, you MUST include a special line starting with 
 const Chunk = require('./models/Chunk');
 
 app.post('/api/chat/onboarding', async (req, res) => {
-  const { repoUrl } = req.body;
+  const { repoUrl, chatModel } = req.body;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -344,6 +403,7 @@ Here is the codebase context:
 ${contextData}`;
 
     const newConvo = new Conversation({
+      userId: req.user.id,
       repoId: repoUrl,
       title: 'Codebase Onboarding Guide',
       messages: [{ role: 'user', content: 'Generate an onboarding guide for this codebase.' }]
@@ -381,8 +441,10 @@ ${contextData}`;
 
 // Phase 3: Idea 2 - Bug Context Tracer
 app.post('/api/chat/bug-trace', async (req, res) => {
-  const { repoUrl, stackTrace } = req.body;
+  const { repoUrl, stackTrace, chatModel } = req.body;
   if (!repoUrl || !stackTrace) return res.status(400).json({ error: 'Repo URL and stack trace are required' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -437,6 +499,7 @@ ${stackTrace}
 ${contextData}`;
 
     const newConvo = new Conversation({
+      userId: req.user.id,
       repoId: repoUrl,
       title: `Bug Trace: ${stackTrace.split('\n')[0].substring(0, 30)}...`,
       messages: [{ role: 'user', content: `Please trace this bug:\n\n${stackTrace}` }]
@@ -476,8 +539,10 @@ ${contextData}`;
 
 // Phase 4: Idea 3 - Tech Debt Radar
 app.post('/api/chat/tech-debt', async (req, res) => {
-  const { repoUrl } = req.body;
+  const { repoUrl, chatModel } = req.body;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -487,7 +552,9 @@ app.post('/api/chat/tech-debt', async (req, res) => {
     res.write(`data: ${JSON.stringify({ status: 'Analyzing entire codebase...' })}\n\n`);
 
     // Fetch all chunks for the repo to feed into Gemini's massive context window
-    const allChunks = await Chunk.find({ repoUrl });
+    // .select() excludes the 768-float embedding array from each chunk to prevent OOM.
+    // .lean() returns plain JS objects instead of full Mongoose Documents (faster, less memory).
+    const allChunks = await Chunk.find({ repoUrl }).select('filePath content -_id').lean();
     let fullContext = '';
     
     for (const chunk of allChunks) {
@@ -496,10 +563,11 @@ app.post('/api/chat/tech-debt', async (req, res) => {
       fullContext += `### FILE: ${chunk.filePath} ###\n${chunk.content}\n\n`;
     }
 
-    // Limit context length if it's ridiculously huge (e.g. > 2M tokens). 1 char is ~0.25 tokens. 
-    // We'll cap at 4 million characters (approx 1M tokens).
-    if (fullContext.length > 4000000) {
-      fullContext = fullContext.substring(0, 4000000) + "\n\n...[TRUNCATED DUE TO SIZE]...";
+    // Limit context length if it's ridiculously huge (e.g. > 2M tokens). 1 char is ~3.5 tokens for code. 
+    // We'll cap at 600,000 characters (approx 170k tokens) to stay safely under the 250k Free Tier limit.
+    if (fullContext.length > 600000) {
+      fullContext = fullContext.substring(0, 600000) + "\n\n...[TRUNCATED DUE TO SIZE]...";
+      res.write(`data: ${JSON.stringify({ warning: 'Your codebase is very large. Only the first ~600,000 characters were sent to the AI to fit within standard Free Tier API limits. Some files may have been omitted from this analysis.' })}\n\n`);
     }
 
     const prompt = `You are DevGrasp, a Senior Principal Engineer.
@@ -518,6 +586,7 @@ Use Markdown with clear headers (##), bullet points, and bold text.
 ${fullContext}`;
 
     const newConvo = new Conversation({
+      userId: req.user.id,
       repoId: repoUrl,
       title: 'Tech Debt Radar Report',
       messages: [{ role: 'user', content: 'Generate a Tech Debt report for this codebase.' }]
@@ -547,7 +616,8 @@ ${fullContext}`;
     res.end();
   } catch (error) {
     console.error('Tech Debt Generation Error:', error);
-    const errMsg = formatGeminiError(error, 'Failed to generate Tech Debt report.');
+    const activeModel = getChatModel(chatModel);
+    const errMsg = formatGeminiError(error, 'Failed to generate Tech Debt report.', activeModel);
     res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
     res.end();
   }
@@ -557,8 +627,10 @@ ${fullContext}`;
 // (Octokit is now required at the top of the file)
 
 app.post('/api/chat/commit-story', async (req, res) => {
-  const { repoUrl, commitCount = 20 } = req.body;
+  const { repoUrl, commitCount = 20, chatModel } = req.body;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -643,6 +715,7 @@ Use Markdown with clear headers (##), bold text, and bullet points. Make it soun
 ${commitHistoryText}`;
 
     const newConvo = new Conversation({
+      userId: req.user.id,
       repoId: repoUrl,
       title: 'Commit Story Generator',
       messages: [{ role: 'user', content: `Generate a Commit Story for the last ${commitCount} commits.` }]
@@ -680,8 +753,10 @@ ${commitHistoryText}`;
 
 // Phase 5: Idea 5 - Interactive PR Review
 app.post('/api/chat/pr-review', async (req, res) => {
-  const { repoUrl, prNumber, message, conversationId } = req.body;
-  if (!repoUrl || !prNumber || !message) return res.status(400).json({ error: 'repoUrl, prNumber, and message are required' });
+  const { repoUrl, prNumber, message, conversationId, chatModel } = req.body;
+  if (!repoUrl || !prNumber) return res.status(400).json({ error: 'Repo URL and PR Number are required' });
+
+  const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -748,6 +823,7 @@ app.post('/api/chat/pr-review', async (req, res) => {
       }
     } else {
       const newConvo = new Conversation({
+        userId: req.user.id,
         repoId: repoUrl,
         title: `PR #${prNumber} Review`,
         messages: []

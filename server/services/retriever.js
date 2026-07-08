@@ -1,66 +1,64 @@
 const Chunk = require('../models/Chunk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { getLocalEmbedding } = require('./localEmbedder');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 
-async function retrieveContext(query, repoUrl = null) {
+async function retrieveContext(query, repoUrl = null, embeddingModel = 'gemini-embedding-001') {
   try {
-    // 1. Embed the query to get its 768-dimensional vector
-    const embeddingResult = await model.embedContent(query);
-    const queryVector = embeddingResult.embedding.values;
+    const isLocal = embeddingModel === 'local-MiniLM';
+    let queryVector;
 
-    // 2. Perform vector search in MongoDB
-    // Note: We use "Devmind" as the index name because that is what the user named it in Atlas UI.
+    if (isLocal) {
+      queryVector = await getLocalEmbedding(query);
+    } else {
+      const model = genAI.getGenerativeModel({ model: embeddingModel });
+      const embeddingResult = await model.embedContent(query);
+      queryVector = embeddingResult.embedding.values;
+    }
+
+    // Perform vector search in MongoDB Atlas with native pre-filtering by repoUrl.
+    // Previously this fetched 1000 candidates from ALL repos and then filtered with a $match stage,
+    // wasting up to 995 candidates from the wrong repos.
+    // Now we pass the filter directly into $vectorSearch so Atlas only scores relevant chunks.
+    const indexName = isLocal ? 'LocalMiniLM' : 'Devmind';
     const pipeline = [
       {
         $vectorSearch: {
-          index: 'Devmind', 
+          index: indexName,
           path: 'embedding',
           queryVector: queryVector,
-          numCandidates: 1000, // Get 1000 candidates to filter down
-          limit: 1000 // Temporarily get 1000 so we can filter by repo efficiently
+          numCandidates: 150,
+          limit: 10,
+          // Pre-filter: only score chunks from the selected repo
+          ...(repoUrl ? { filter: { repoUrl: { $eq: repoUrl } } } : {})
         }
-      }
-    ];
-
-    // Optional: Filter by specific repository if one was selected
-    if (repoUrl) {
-      pipeline.push({
-        $match: { repoUrl: repoUrl }
-      });
-    }
-
-    // Now slice the top 5 matches
-    pipeline.push(
-      { $limit: 5 },
+      },
       {
-        // Remove the embedding array from the results to save bandwidth, keeping only text
+        // Remove the embedding array from results to save bandwidth (keeping only text)
         $project: {
           _id: 0,
           filePath: 1,
           content: 1,
-          score: { $meta: "vectorSearchScore" }
+          score: { $meta: 'vectorSearchScore' }
         }
       }
-    );
+    ];
 
     const results = await Chunk.aggregate(pipeline);
 
-    // 3. Format the context into a string
-    if (results.length === 0) return "";
-    
+    if (results.length === 0) return '';
+
     let contextStr = "Here are some relevant code snippets from the user's repository:\n\n";
     results.forEach(res => {
-      // We append each chunk with its file path so Gemini knows which file it's looking at
       contextStr += `--- File: ${res.filePath} ---\n${res.content}\n\n`;
     });
 
     return contextStr;
   } catch (error) {
-    console.error("Vector Search failed:", error);
-    // If search fails (e.g., index not ready), just return empty context so chat still works
-    return "";
+    console.error('Vector Search failed:', error.message || error);
+    // If search fails (e.g., index not ready), return empty context so chat still works
+    return '';
   }
 }
 
