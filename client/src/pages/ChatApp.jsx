@@ -6,6 +6,7 @@ import WorkspaceModal from '../components/WorkspaceModal';
 import FileViewerModal from '../components/FileViewerModal';
 import SettingsModal from '../components/SettingsModal';
 import { streamSSE } from '../utils/streamSSE';
+import api from '../lib/api';
 import { AuthContext } from '../context/AuthContext';
 
 export default function ChatApp() {
@@ -138,9 +139,9 @@ export default function ChatApp() {
   // Fetch indexed repos
   const fetchIndexedRepos = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/indexed`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await api.get('/api/repos/indexed');
+      if (res.status === 200) {
+        const data = res.data;
         setIndexedRepos(data);
       }
     } catch (err) {
@@ -154,9 +155,9 @@ export default function ChatApp() {
     // Poll for API usage metrics every 3 seconds
     const fetchUsage = async () => {
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/status/usage`);
-        if (res.ok) {
-          const data = await res.json();
+        const res = await api.get('/api/status/usage');
+        if (res.status === 200) {
+          const data = res.data;
           setUsageStatus(data);
         }
       } catch (e) {
@@ -170,11 +171,7 @@ export default function ChatApp() {
 
   const pauseIndexing = async (url) => {
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/api/repos/pause`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
+      await api.post('/api/repos/pause', { url });
       setIsIndexing(false);
       fetchIndexedRepos();
     } catch (e) {
@@ -185,11 +182,7 @@ export default function ChatApp() {
   const skipCurrentFile = async (url, filePath) => {
     setIsSkippingFile(true);
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/skip-file`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, filePath }),
-      });
+      const res = await api.post('/api/repos/skip-file', { url, filePath });
       if (!res.ok) {
         throw new Error('Failed to send skip request');
       }
@@ -206,12 +199,8 @@ export default function ChatApp() {
   const deleteWorkspace = async (url) => {
     if (!window.confirm("Are you sure you want to completely delete this workspace and all its data?")) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/delete`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
-      if (res.ok) {
+      const res = await api.delete('/api/repos/delete', { data: { url } });
+      if (res.status === 200) {
         if (selectedRepo === url) {
           setSelectedRepo(null);
           setMessages([]);
@@ -236,17 +225,13 @@ export default function ChatApp() {
     setRepoAnalysis(null);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlToAnalyze }),
-      });
+      const response = await api.post('/api/repos/analyze', { url: urlToAnalyze });
       
-      if (!response.ok) {
+      if (response.status !== 200) {
         throw new Error('Failed to analyze repository');
       }
 
-      const analysis = await response.json();
+      const analysis = response.data;
       setRepoAnalysis(analysis);
       setIsIndexing(false);
       setIndexProgress(null);
@@ -274,23 +259,19 @@ export default function ChatApp() {
       }
       
       // Fire-and-forget: start the job and get immediate 200 OK
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/index`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const response = await api.post('/api/repos/index', payload);
       
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
+      if (response.status !== 200) {
+        const errData = response.data || {};
         throw new Error(errData.error || 'Failed to start indexing');
       }
 
       // Poll /api/repos/status every 2 seconds for live progress
       const poll = async () => {
         try {
-          const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/status?url=${encodeURIComponent(urlToIndex)}`);
-          if (!statusRes.ok) throw new Error('Status check failed');
-          const data = await statusRes.json();
+          const statusRes = await api.get(`/api/repos/status?url=${encodeURIComponent(urlToIndex)}`);
+          if (statusRes.status !== 200) throw new Error('Status check failed');
+          const data = statusRes.data;
 
           if (data.status === 'complete') {
             setIsIndexing(false);
@@ -356,9 +337,9 @@ export default function ChatApp() {
   const fetchConversations = async (repoUrl) => {
     if (!repoUrl) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/history?repoId=${encodeURIComponent(repoUrl)}`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await api.get(`/api/chat/history?repoId=${encodeURIComponent(repoUrl)}`);
+      if (res.status === 200) {
+        const data = res.data;
         setConversations(data);
       }
     } catch (err) {
@@ -369,9 +350,9 @@ export default function ChatApp() {
   // Load a specific conversation
   const loadConversation = async (convoId) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${convoId}`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await api.get(`/api/chat/conversation/${convoId}`);
+      if (res.status === 200) {
+        const data = res.data;
         setMessages(data.messages);
         setCurrentConversationId(convoId);
       }
@@ -385,10 +366,8 @@ export default function ChatApp() {
     if (!window.confirm("Are you sure you want to delete this chat?")) return;
     
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
+      const res = await api.delete(`/api/chat/conversation/${id}`);
+      if (res.status === 200) {
         setConversations(prev => prev.filter(c => c._id !== id));
         if (currentConversationId === id) {
           startNewChat();
@@ -408,9 +387,9 @@ export default function ChatApp() {
   const fetchPRs = async (repoUrl) => {
     if (!repoUrl) return;
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/prs?repoUrl=${encodeURIComponent(repoUrl)}`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await api.get(`/api/repos/prs?repoUrl=${encodeURIComponent(repoUrl)}`);
+      if (res.status === 200) {
+        const data = res.data;
         setOpenPRs(prev => ({ ...prev, [repoUrl]: data }));
       }
     } catch (err) {
@@ -423,11 +402,7 @@ export default function ChatApp() {
     
     if (currentConversationId) {
       try {
-        await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${currentConversationId}/truncate`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageIndex: index })
-        });
+        await api.put(`/api/chat/conversation/${currentConversationId}/truncate`, { messageIndex: index });
       } catch(e) { console.error(e); }
     }
     
@@ -443,11 +418,7 @@ export default function ChatApp() {
     
     if (currentConversationId) {
       try {
-        await fetch(`${import.meta.env.VITE_API_URL}/api/chat/conversation/${currentConversationId}/truncate`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageIndex: userMessageIndex })
-        });
+        await api.put(`/api/chat/conversation/${currentConversationId}/truncate`, { messageIndex: userMessageIndex });
       } catch(e) { console.error(e); }
     }
     
@@ -564,9 +535,9 @@ export default function ChatApp() {
     setIsFileLoading(true);
     setViewingFile({ path: filePath, content: '' }); // open modal in loading state
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/repos/file?repoUrl=${encodeURIComponent(selectedRepo)}&filePath=${encodeURIComponent(filePath)}`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await api.get(`/api/repos/file?repoUrl=${encodeURIComponent(selectedRepo)}&filePath=${encodeURIComponent(filePath)}`);
+      if (res.status === 200) {
+        const data = res.data;
         setViewingFile({ path: filePath, content: data.content });
       } else {
         setViewingFile({ path: filePath, content: 'Error loading file content. File might not be indexed properly.' });

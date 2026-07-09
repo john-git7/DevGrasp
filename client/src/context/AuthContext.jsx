@@ -1,4 +1,5 @@
 import { createContext, useState, useEffect } from 'react';
+import api from '../lib/api';
 
 export const AuthContext = createContext();
 
@@ -20,12 +21,9 @@ export function AuthProvider({ children }) {
 
   const fetchUser = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
+      const res = await api.get('/api/auth/me');
+      if (res.status === 200) {
+        setUser(res.data.user);
       } else {
         setToken(null);
       }
@@ -38,27 +36,23 @@ export function AuthProvider({ children }) {
   };
 
   const login = async (email, password) => {
-    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    setToken(data.token);
-    setUser(data.user);
+    try {
+      const res = await api.post('/api/auth/login', { email, password });
+      setToken(res.data.token);
+      setUser(res.data.user);
+    } catch (err) {
+      throw new Error(err.response?.data?.error || err.message);
+    }
   };
 
   const register = async (name, email, password) => {
-    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    setToken(data.token);
-    setUser(data.user);
+    try {
+      const res = await api.post('/api/auth/register', { name, email, password });
+      setToken(res.data.token);
+      setUser(res.data.user);
+    } catch (err) {
+      throw new Error(err.response?.data?.error || err.message);
+    }
   };
 
   const logout = () => {

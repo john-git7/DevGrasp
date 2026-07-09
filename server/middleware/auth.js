@@ -20,7 +20,7 @@ function requireApiKey(req, res, next) {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.API_SECRET);
+    const decoded = jwt.verify(token, process.env.API_SECRET || process.env.JWT_SECRET || 'fallback_secret');
     req.user = decoded; // Attach user payload { id: ... } to request
     next();
   } catch (err) {

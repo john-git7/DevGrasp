@@ -17,6 +17,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  githubToken: {
+    iv: { type: String },
+    encryptedData: { type: String }
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 
