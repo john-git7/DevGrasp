@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import api from '../lib/api';
 
 const CHAT_MODELS = {
   'gemini-3.5-flash': {
@@ -62,10 +63,9 @@ export default function SettingsModal({
     if (!isOpen) return;
     const fetchUsage = async () => {
       try {
-        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/status/usage`);
-        if (res.ok) {
-          const data = await res.json();
-          setUsage(data.chat);
+        const res = await api.get('/api/status/usage');
+        if (res.status === 200) {
+          setUsage(res.data.chat);
         }
       } catch (err) {
         console.error("Failed to fetch usage metrics", err);

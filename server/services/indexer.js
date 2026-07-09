@@ -4,11 +4,11 @@ const Chunk = require('../models/Chunk');
 const RepoStatus = require('../models/RepoStatus');
 const usageTracker = require('./usageTracker');
 const { getLocalEmbedding } = require('./localEmbedder');
+const { executeWithRetry } = require('../utils/retry');
 
 const activeJobs = {};
 
 // Setup Octokit and Gemini
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN }); // Authenticate to prevent strict rate limits
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
 
 // Helper to check if file is valid source code (ignores stream segments and hidden folders)
@@ -38,95 +38,9 @@ function chunkText(text, maxChars = 1000) {
   return chunks;
 }
 
-async function interruptibleSleep(ms, checkCancel) {
-  const steps = Math.ceil(ms / 500);
-  for (let i = 0; i < steps; i++) {
-    const val = checkCancel && checkCancel();
-    if (val) return val; // Return true (cancel) or 'SKIP_FILE'
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  return false;
-}
 
-// Helper to handle 503 API High Demand errors
-async function executeWithRetry(apiCall, onProgress, checkCancel, maxRetries = 10) {
-  let attempt = 0;
-  while (attempt < maxRetries) {
-    try {
-      const apiPromise = apiCall();
-      const cancelPromise = new Promise((_, reject) => {
-        const interval = setInterval(() => {
-          const cancelVal = checkCancel && checkCancel();
-          if (cancelVal === 'SKIP_FILE') {
-            clearInterval(interval);
-            reject(new Error('FILE_SKIPPED'));
-          } else if (cancelVal === true) {
-            clearInterval(interval);
-            reject(new Error('JOB_CANCELLED'));
-          }
-        }, 500);
-        apiPromise.finally(() => clearInterval(interval)).catch(() => {});
-      });
-
-      return await Promise.race([apiPromise, cancelPromise]);
-    } catch (error) {
-      attempt++;
-      
-      const cancelVal = checkCancel && checkCancel();
-      if (cancelVal === 'SKIP_FILE') {
-        throw new Error('FILE_SKIPPED');
-      } else if (cancelVal === true) {
-        throw new Error('JOB_CANCELLED');
-      }
-
-      const isRateLimit = error.status === 429 || (error.message && error.message.includes('429'));
-      const isServiceUnavailable = error.status === 503 || (error.message && error.message.includes('503'));
-      
-      if ((isRateLimit || isServiceUnavailable) && attempt < maxRetries) {
-        let waitTime = attempt * 5000;
-        
-        if (isRateLimit) {
-          waitTime = 60000; // Default 1 minute
-          const match = error.message && error.message.match(/Please retry in ([\d\.]+)s/);
-          if (match) {
-            waitTime = Math.ceil(parseFloat(match[1])) * 1000 + 2000; // Add 2s buffer
-          }
-        }
-
-        console.warn(`[API Issue] Retrying attempt ${attempt} in ${waitTime/1000}s...`);
-        
-        if (onProgress) {
-          onProgress({ 
-            status: 'quota_wait', 
-            message: `API Quota Exceeded. Pausing for ${waitTime/1000}s...`,
-            waitTime: waitTime
-          });
-        }
-
-        const cancelled = await interruptibleSleep(waitTime, checkCancel);
-        if (cancelled === true) {
-          throw new Error('JOB_CANCELLED');
-        } else if (cancelled === 'SKIP_FILE') {
-          throw new Error('FILE_SKIPPED');
-        }
-        
-        if (onProgress) {
-          onProgress({ status: 'indexing_resumed', message: 'Resuming indexing...' });
-        }
-      } else {
-        // If out of retries, format a nice error string to pass up instead of throwing a massive raw object
-        if (isRateLimit) {
-          throw new Error('Gemini API Quota Exceeded (429). You have exceeded your input token limit. Please wait a minute for the quota to refresh.');
-        } else if (isServiceUnavailable) {
-          throw new Error('The AI model is currently experiencing high demand (503). Please try again in a few moments.');
-        }
-        throw error;
-      }
-    }
-  }
-}
-
-async function analyzeRepository(repoUrl) {
+async function analyzeRepository(repoUrl, userToken = null) {
+  const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
   try {
     const urlParts = new URL(repoUrl).pathname.split('/').filter(Boolean);
     if (urlParts.length < 2) throw new Error('Invalid GitHub URL');
@@ -182,7 +96,8 @@ async function analyzeRepository(repoUrl) {
   }
 }
 
-async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gemini-embedding-001', excludedExtensionsInput) {
+async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gemini-embedding-001', excludedExtensionsInput, userToken = null) {
+  const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
   // Clear any stale cancellation state from previous runs
   activeJobs[repoUrl] = { cancel: false };
   const isLocal = embeddingModel === 'local-MiniLM';
@@ -239,16 +154,15 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
 
     clearInterval(fetchHeartbeat);
 
-    // Build a Set of already-indexed file paths using an aggregate cursor.
-    // Previously used Chunk.distinct() which loads the entire array into RAM at once.
+    // Build a Map of already-indexed file paths and their SHAs.
     // The cursor approach streams results so memory usage stays constant regardless of repo size.
-    const alreadyIndexed = new Set();
+    const alreadyIndexed = new Map();
     const indexedCursor = Chunk.aggregate([
       { $match: { repoUrl } },
-      { $group: { _id: '$filePath' } }
+      { $group: { _id: '$filePath', sha: { $first: '$fileSha' } } }
     ]).cursor();
     for await (const doc of indexedCursor) {
-      alreadyIndexed.add(doc._id);
+      alreadyIndexed.set(doc._id, doc.sha);
     }
 
     let files = treeResponse.data.tree.filter(
@@ -262,7 +176,38 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     });
 
     const totalFilesCount = files.length;
-    files = files.filter(f => !alreadyIndexed.has(f.path));
+    let filesToProcess = [];
+    let filesToDelete = [];
+    const currentPaths = new Set();
+    
+    for (const file of files) {
+      currentPaths.add(file.path);
+      const existingSha = alreadyIndexed.get(file.path);
+      
+      if (!alreadyIndexed.has(file.path)) {
+        // New file
+        filesToProcess.push(file);
+      } else if (existingSha !== file.sha) {
+        // Modified file (or missing SHA from old index)
+        filesToProcess.push(file);
+        filesToDelete.push(file.path);
+      }
+    }
+    
+    // Check for deleted files
+    for (const [path] of alreadyIndexed.entries()) {
+      if (!currentPaths.has(path)) {
+        filesToDelete.push(path);
+      }
+    }
+    
+    // Delete chunks for modified and deleted files
+    if (filesToDelete.length > 0) {
+      console.log(`Deleting chunks for ${filesToDelete.length} modified/deleted files...`);
+      await Chunk.deleteMany({ repoUrl, filePath: { $in: filesToDelete } });
+    }
+    
+    files = filesToProcess;
     let processedCount = totalFilesCount - files.length;
 
     if (activeJobs[repoUrl]?.cancel) {
@@ -405,23 +350,24 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
                     content: { parts: [{ text }] }
                   }))
                 }),
-                (progressData) => {
-                  RepoStatus.updateOne(
-                    { repoUrl },
-                    { 
-                      status: progressData.status === 'quota_wait' ? 'quota_wait' : 'indexing',
-                      waitTime: progressData.status === 'quota_wait' ? (progressData.waitTime || 60000) : 0,
-                      lastUpdated: Date.now()
-                    }
-                  ).catch(e => console.error('Failed to update RepoStatus in executeWithRetry:', e));
-
-                  if (onProgress) onProgress(progressData);
-                },
-                () => {
-                  if (!activeJobs[repoUrl]) return false;
-                  if (activeJobs[repoUrl].cancel) return true;
-                  if (activeJobs[repoUrl].skipFile === file.path) return 'SKIP_FILE';
-                  return false;
+                {
+                  onProgress: (progressData) => {
+                    RepoStatus.updateOne(
+                      { repoUrl },
+                      { 
+                        status: progressData.status === 'quota_wait' ? 'quota_wait' : 'indexing',
+                        waitTime: progressData.status === 'quota_wait' ? (progressData.waitTime || 60000) : 0,
+                        lastUpdated: Date.now()
+                      }
+                    ).catch(e => console.error('Failed to update RepoStatus in executeWithRetry:', e));
+                    if (onProgress) onProgress(progressData);
+                  },
+                  checkCancel: () => {
+                    if (!activeJobs[repoUrl]) return false;
+                    if (activeJobs[repoUrl].cancel) return true;
+                    if (activeJobs[repoUrl].skipFile === file.path) return 'SKIP_FILE';
+                    return false;
+                  }
                 }
               );
 
@@ -440,6 +386,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
               await Chunk.create({
                 repoUrl,
                 filePath: file.path,
+                fileSha: file.sha,
                 content: chunks[i],
                 embedding: embeddings[i].values
               });

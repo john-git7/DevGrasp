@@ -1,3 +1,15 @@
+import React, { useState, useEffect } from 'react';
+import {
+    Modal,
+    ModalOverlay,
+    ModalContent,
+    ModalHeader,
+    ModalBody,
+    ModalCloseButton,
+    Spinner
+} from '@chakra-ui/react';
+import api from '../lib/api';
+
 const FileViewerModal = ({ isOpen, onClose, filePath, repoUrl }) => {
   const [fileContent, setFileContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -9,20 +21,10 @@ const FileViewerModal = ({ isOpen, onClose, filePath, repoUrl }) => {
                 setLoading(true);
                 setError(null);
                 try {
-                    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/file-viewer`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filePath, repoUrl }),
-                    });     
-
-                    if (!response.ok) {
-                        throw new Error(`Error fetching file content: ${response.statusText}`);
-                    }
-
-                    const data = await response.json();
-                    setFileContent(data.content);
+                    const response = await api.post('/api/file-viewer', { filePath, repoUrl });
+                    setFileContent(response.data.content);
                 } catch (err) {
-                    setError(err.message);
+                    setError(err.response?.data?.error || err.message);
                 }       
                 setLoading(false);
             };  
