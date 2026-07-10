@@ -6,6 +6,10 @@ const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const { decrypt } = require('../utils/crypto');
 
+const isValidGithubUrl = (url) => {
+  const pattern = /^(https?:\/\/)?(www\.)?github\.com\/[\w-]+\/[\w.-]+(\/)?$/;
+  return pattern.test(url);
+};
 async function getUserToken(userId) {
   const user = await User.findById(userId);
   if (user && user.githubToken && user.githubToken.encryptedData) {
@@ -35,6 +39,7 @@ const getIndexedRepos = async (req, res) => {
 const getFile = async (req, res) => {
   const { repoUrl, filePath } = req.query;
   if (!repoUrl || !filePath) return res.status(400).json({ error: 'repoUrl and filePath are required' });
+  if (!isValidGithubUrl(repoUrl)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
 
   try {
     const chunks = await Chunk.find({ repoUrl, filePath }).sort({ _id: 1 });
@@ -51,6 +56,7 @@ const getFile = async (req, res) => {
 const analyze = async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
+  if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
 
   try {
     const userToken = await getUserToken(req.user.id);
@@ -81,6 +87,7 @@ const skip = (req, res) => {
 const index = async (req, res) => {
   const { url, embeddingModel, excludedExtensions } = req.body;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'GitHub URL is required' });
+  if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
 
   if (isJobRunning(url)) {
     console.log(`Job already running for ${url}, ignoring duplicate request.`);
