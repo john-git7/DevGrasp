@@ -23,8 +23,24 @@ app.use(express.json({ limit: '50mb' }));
 // Auth routes (unprotected inside)
 app.use('/api/auth', authRoute);
 
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // 50 requests per window per IP
+  message: { error: 'Too many requests, slow down.' }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20 // stricter for AI endpoints
+});
+
 // Apply API key authentication to all /api routes
 app.use('/api', requireApiKey);
+
+app.use('/api/', limiter);
+app.use('/api/chat', aiLimiter);
 
 app.use('/api/repos', reposRoute);
 app.use('/api/chat', chatRoute);

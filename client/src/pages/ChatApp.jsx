@@ -773,15 +773,16 @@ export default function ChatApp() {
 
           <form 
             onSubmit={sendMessage}
-            className="max-w-2xl w-full relative flex items-center apple-glass-pill rounded-2xl md:rounded-3xl pointer-events-auto transition-all focus-within:border-[var(--color-apple-text)]"
+            className={`max-w-2xl w-full relative flex items-center apple-glass-pill rounded-2xl md:rounded-3xl pointer-events-auto transition-all focus-within:border-[var(--color-apple-text)] ${!selectedRepo ? 'opacity-60 grayscale-[50%]' : ''}`}
           >
              <div className="flex items-center pl-1 md:pl-2 pr-1 md:pr-2">
               {/* Voice Input Button */}
               <button
                 type="button"
                 onClick={toggleListening}
-                title="Voice input"
-                className={`p-1.5 md:p-2 rounded-full transition-colors ${isListening ? 'text-rose-400 bg-rose-400/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
+                disabled={!selectedRepo}
+                title={!selectedRepo ? "Select a workspace first" : "Voice input"}
+                className={`p-1.5 md:p-2 rounded-full transition-colors ${!selectedRepo ? 'opacity-50 cursor-not-allowed text-[var(--color-apple-text)]/30' : isListening ? 'text-rose-400 bg-rose-400/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 md:w-5 md:h-5">
                   <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
@@ -793,8 +794,9 @@ export default function ChatApp() {
               <button
                 type="button"
                 onClick={() => setIsBugTraceMode(!isBugTraceMode)}
-                title="Bug Context Tracer Mode"
-                className={`p-1.5 md:p-2 rounded-full transition-colors ${isBugTraceMode ? 'text-[var(--color-apple-blue)] bg-[var(--color-apple-blue)]/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
+                disabled={!selectedRepo}
+                title={!selectedRepo ? "Select a workspace first" : "Bug Context Tracer Mode"}
+                className={`p-1.5 md:p-2 rounded-full transition-colors ${!selectedRepo ? 'opacity-50 cursor-not-allowed text-[var(--color-apple-text)]/30' : isBugTraceMode ? 'text-[var(--color-apple-blue)] bg-[var(--color-apple-blue)]/20' : 'text-[var(--color-apple-text)]/50 hover:text-[var(--color-apple-text)] hover:bg-[var(--color-apple-blue)]/20'}`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 md:w-5 md:h-5">
                   <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 01.67 1.34l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 11-.671-1.34l.041-.022zM12 9a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
@@ -806,8 +808,8 @@ export default function ChatApp() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
-                placeholder="Paste your stack trace or error log here to trace the bug..."
+                disabled={isLoading || !selectedRepo}
+                placeholder={!selectedRepo ? "Select a workspace to start chatting..." : "Paste your stack trace or error log here to trace the bug..."}
                 rows="2"
                 className="flex-1 bg-transparent py-2.5 px-2 focus:outline-none text-[var(--color-apple-text)] placeholder-[var(--color-apple-text)]/50 text-sm font-medium resize-none min-h-[60px]"
                 onKeyDown={(e) => {
@@ -822,8 +824,8 @@ export default function ChatApp() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
-                placeholder={isListening ? "Listening..." : "Message DevGrasp..."}
+                disabled={isLoading || !selectedRepo}
+                placeholder={!selectedRepo ? "Select a workspace to start chatting..." : isListening ? "Listening..." : "Message DevGrasp..."}
                 className="flex-1 bg-transparent py-3.5 px-2 focus:outline-none text-[var(--color-apple-text)] placeholder-[var(--color-apple-text)]/50 text-sm font-medium"
               />
             )}
@@ -831,7 +833,8 @@ export default function ChatApp() {
             <div className="pr-2 pl-2">
               <button 
                 type="submit"
-                disabled={isLoading || !input.trim()}
+                disabled={isLoading || !input.trim() || !selectedRepo}
+                title={!selectedRepo ? "Select a workspace first" : "Send message"}
                 className="p-2 rounded-2xl bg-[var(--color-apple-blue)] text-[var(--color-apple-bg)] hover:bg-[var(--color-apple-text)] disabled:bg-[var(--color-apple-blue)]/30 disabled:text-[var(--color-apple-text)]/30 transition-colors shadow-sm"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
