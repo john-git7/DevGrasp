@@ -27,13 +27,13 @@ const rateLimit = require('express-rate-limit');
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // 50 requests per window per IP
+  max: 2000, // Increased from 50 to allow client polling
   message: { error: 'Too many requests, slow down.' }
 });
 
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20 // stricter for AI endpoints
+  max: 200 // Increased from 20
 });
 
 // Apply API key authentication to all /api routes
