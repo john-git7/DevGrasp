@@ -324,6 +324,34 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
             }
             
             const chunkBatch = chunks.slice(j, j + batchSize);
+            
+            if (!isLocal) {
+              // Proactive rate limit handling: Gemini free tier allows 15 RPM
+              let usage = usageTracker.getUsage();
+              while (usage.embeddings.rpm >= 14) {
+                if (onProgress) {
+                  onProgress({ 
+                    status: 'quota_wait', 
+                    message: 'Approaching API limit, waiting for quota window to clear...', 
+                    waitTime: 10000 
+                  });
+                }
+                const cancelVal = await executeWithRetry(() => new Promise(r => setTimeout(r, 10000)), {
+                  maxRetries: 1,
+                  checkCancel: () => {
+                    if (!activeJobs[repoUrl]) return false;
+                    if (activeJobs[repoUrl].cancel) return true;
+                    if (activeJobs[repoUrl].skipFile === file.path) return 'SKIP_FILE';
+                    return false;
+                  }
+                });
+                
+                if (cancelVal === true) throw new Error('JOB_CANCELLED');
+                if (cancelVal === 'SKIP_FILE') throw new Error('FILE_SKIPPED');
+                
+                usage = usageTracker.getUsage();
+              }
+            }
 
             let batchEmbeddings;
             if (isLocal) {
@@ -351,6 +379,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
                   }))
                 }),
                 {
+                  maxRetries: 10,
                   onProgress: (progressData) => {
                     RepoStatus.updateOne(
                       { repoUrl },

@@ -51,10 +51,10 @@ async function executeWithRetry(apiCall, options = {}) {
         let waitTime = attempt * 5000;
         
         if (isRateLimit) {
-          waitTime = 60000; // Default 1 minute
+          waitTime = 65000; // Default 65s to ensure minute window clears
           const match = error.message && error.message.match(/Please retry in ([\d\.]+)s/);
           if (match) {
-            waitTime = Math.ceil(parseFloat(match[1])) * 1000 + 2000; // Add 2s buffer
+            waitTime = Math.ceil(parseFloat(match[1])) * 1000 + 5000; // Add 5s buffer
           }
         }
 
