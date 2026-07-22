@@ -102,10 +102,10 @@ export default function SettingsModal({
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
       <div className="apple-modal-backdrop absolute inset-0" onClick={onClose}></div>
-      <div className="relative w-full max-w-lg apple-glass-panel rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+      <div className="relative w-full max-w-lg bg-[#1c1c1e] border border-[var(--color-apple-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
         
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[var(--color-apple-border)]/30 flex justify-between items-center bg-[var(--color-apple-glass)]">
+        <div className="px-5 py-4 border-b border-[var(--color-apple-border)]/30 flex justify-between items-center bg-[#1c1c1e]">
           <h2 className="text-lg font-bold text-[var(--color-apple-text)] tracking-tight font-sans flex items-center gap-2">
             <span>⚙️</span> Model Settings
           </h2>
