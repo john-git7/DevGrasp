@@ -14,19 +14,19 @@ const techDebt = async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    res.write(`data: ${JSON.stringify({ status: 'Analyzing entire codebase...' })}nn`);
+    res.write(`data: ${JSON.stringify({ status: 'Analyzing entire codebase...' })}\n\n`);
 
     const allChunks = await Chunk.find({ repoUrl }).select('filePath content -_id').lean();
     let fullContext = '';
     
     for (const chunk of allChunks) {
       if (chunk.filePath.match(/.(min.js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/i)) continue;
-      fullContext += `### FILE: ${chunk.filePath} ###n${chunk.content}nn`;
+      fullContext += `### FILE: ${chunk.filePath} ###\n${chunk.content}\n\n`;
     }
 
     if (fullContext.length > 600000) {
-      fullContext = fullContext.substring(0, 600000) + "nn...[TRUNCATED DUE TO SIZE]...";
-      res.write(`data: ${JSON.stringify({ warning: 'Your codebase is very large. Only the first ~600,000 characters were sent to the AI to fit within standard Free Tier API limits. Some files may have been omitted from this analysis.' })}nn`);
+      fullContext = fullContext.substring(0, 600000) + "\n\n...[TRUNCATED DUE TO SIZE]...";
+      res.write(`data: ${JSON.stringify({ warning: 'Your codebase is very large. Only the first ~600,000 characters were sent to the AI to fit within standard Free Tier API limits. Some files may have been omitted from this analysis.' })}\n\n`);
     }
 
     const prompt = `You are DevGrasp, a Senior Principal Engineer.
@@ -53,8 +53,8 @@ ${fullContext}`;
     await newConvo.save();
     const convoId = newConvo._id.toString();
 
-    res.write(`data: ${JSON.stringify({ status: 'Generating Tech Debt Report...' })}nn`);
-    res.write(`data: ${JSON.stringify({ conversationId: convoId })}nn`);
+    res.write(`data: ${JSON.stringify({ status: 'Generating Tech Debt Report...' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ conversationId: convoId })}\n\n`);
 
     const result = await executeWithRetry(() => model.generateContentStream(prompt));
 
@@ -63,7 +63,7 @@ ${fullContext}`;
       const chunkText = chunk.text();
       if (chunkText) {
         fullAssistantResponse += chunkText;
-        res.write(`data: ${JSON.stringify({ text: chunkText })}nn`);
+        res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
       }
     }
 
@@ -71,13 +71,13 @@ ${fullContext}`;
       $push: { messages: { role: 'assistant', content: fullAssistantResponse } }
     });
 
-    res.write('data: [DONE]nn');
+    res.write('data: [DONE]\n\n');
     res.end();
   } catch (error) {
     console.error('Tech Debt Generation Error:', error);
     const activeModel = getChatModel(chatModel);
     const errMsg = formatGeminiError(error, 'Failed to generate Tech Debt report.', activeModel);
-    res.write(`data: ${JSON.stringify({ error: errMsg })}nn`);
+    res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
     res.end();
   }
 };
