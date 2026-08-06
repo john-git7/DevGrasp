@@ -19,6 +19,9 @@ async function getUserToken(userId) {
 }
 
 const getIndexedRepos = async (req, res) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ error: 'Unauthorized: User session not found' });
+  }
   try {
     const chunkRepos = await Chunk.distinct('repoUrl');
     for (const url of chunkRepos) {
@@ -58,6 +61,9 @@ const analyze = async (req, res) => {
   if (!url) return res.status(400).json({ error: 'url is required' });
   if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
 
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ error: 'Unauthorized: User session not found' });
+  }
   try {
     const userToken = await getUserToken(req.user.id);
     const analysis = await analyzeRepository(url, userToken);
@@ -88,6 +94,10 @@ const index = async (req, res) => {
   const { url, embeddingModel, excludedExtensions } = req.body;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'GitHub URL is required' });
   if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
+
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ error: 'Unauthorized: User session not found' });
+  }
 
   if (isJobRunning(url)) {
     console.log(`Job already running for ${url}, ignoring duplicate request.`);
@@ -134,6 +144,10 @@ const deleteRepo = async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ error: 'Unauthorized: User session not found' });
+  }
+
   try {
     await Conversation.deleteMany({ repoId: url, userId: req.user.id });
 
@@ -166,9 +180,13 @@ const getPRs = async (req, res) => {
     const parts = repoUrl.split('/').filter(Boolean);
     if(parts.length >= 2) {
       owner = parts[parts.length - 2];
-      repoName = parts[parts.length - 1].replace(/.git$/, '');
+      repoName = parts[parts.length - 1].replace(/\.git$/, '');
     } else {
       return res.status(400).json({ error: 'Invalid repoUrl format' });
+    }
+    
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ error: 'Unauthorized: User session not found' });
     }
     
     const userToken = await getUserToken(req.user.id);
@@ -184,14 +202,19 @@ const getPRs = async (req, res) => {
       number: pr.number,
       title: pr.title,
       url: pr.html_url,
-      author: pr.user.login,
+      author: pr.user?.login || 'unknown',
       createdAt: pr.created_at
     }));
     
     res.json(prData);
   } catch (err) {
     console.error('Error fetching PRs:', err.message);
-    res.status(500).json({ error: 'Failed to fetch PRs' });
+    if (err.status === 401 || err.status === 403 || err.message?.includes('Bad credentials')) {
+      return res.status(err.status || 401).json({ 
+        error: 'GitHub API authentication failed. Please configure a valid GitHub Personal Access Token in your settings.' 
+      });
+    }
+    res.status(500).json({ error: 'Failed to fetch PRs: ' + err.message });
   }
 };
 
