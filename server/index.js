@@ -9,74 +9,50 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { Octokit } = require('@octokit/rest');
+
 const usageTracker = require('./services/usageTracker');
+const { requireApiKey } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+const authRoute = require('./routes/auth');
 const reposRoute = require('./routes/repos');
+const chatRoute = require('./routes/chat');
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Auth routes (unprotected inside)
+app.use('/api/auth', authRoute);
+
+const rateLimit = require('express-rate-limit');
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 2000, // Increased from 50 to allow client polling
+  message: { error: 'Too many requests, slow down.' }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200 // Increased from 20
+});
+
+// Apply API key authentication to all /api routes
+app.use('/api', requireApiKey);
+
+app.use('/api/', limiter);
+app.use('/api/chat', aiLimiter);
+
 app.use('/api/repos', reposRoute);
+app.use('/api/chat', chatRoute);
 
-// Initialize Gemini
-// Notice we use GEMINI_KEY from the .env file
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
-
-// Helper to handle 503 API High Demand errors
-async function executeWithRetry(apiCall, maxRetries = 3) {
-  let attempt = 0;
-  while (attempt < maxRetries) {
-    try {
-      const result = await apiCall();
-      
-      // Track usage if it's a Gemini generate content call
-      if (result && result.response) {
-        result.response.then(res => {
-          const tokens = res.usageMetadata?.totalTokenCount || 0;
-          usageTracker.trackChatRequest(tokens);
-        }).catch(e => console.error('Error tracking usage:', e));
-      } else if (result && result.usageMetadata) { // non-stream
-        const tokens = result.usageMetadata.totalTokenCount || 0;
-        usageTracker.trackChatRequest(tokens);
-      }
-      
-      return result;
-    } catch (error) {
-      attempt++;
-      if (error.status === 503 && attempt < maxRetries) {
-        console.warn(`[503 Service Unavailable] Gemini API high demand. Retrying attempt ${attempt} in ${attempt * 2}s...`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-      } else {
-        throw error;
-      }
-    }
-  }
-}
-
-// Helper to format API errors nicely for the UI
-function formatGeminiError(error, defaultMsg) {
-  if (error.status === 429) {
-    let msg = 'Gemini API Quota Exceeded (429).';
-    // Try to extract the retry delay if provided by the API
-    const retryInfo = error.errorDetails?.find(d => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
-    if (retryInfo && retryInfo.retryDelay) {
-      msg += ` Please retry in ${retryInfo.retryDelay}.`;
-    } else {
-      msg += ' You have exceeded your input token limit. Please wait a minute for the quota to refresh.';
-    }
-    return msg;
-  }
-  if (error.status === 503) {
-    return 'The AI model is currently experiencing high demand. Please try again in a few moments.';
-  }
-  return defaultMsg;
-}
+// GET usage metrics
+app.get('/api/status/usage', (req, res) => {
+  res.json(usageTracker.getUsage());
+});
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI, { family: 4 })
