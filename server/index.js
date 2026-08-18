@@ -208,6 +208,25 @@ app.get('/api/status/usage', (req, res) => {
   res.json(usageTracker.getUsage());
 });
 
+// GET health check — used by Render.com, UptimeRobot, and CI pipelines
+// Returns 200 if the server and database are operational, 503 otherwise.
+app.get('/api/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  // readyState: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+  const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
+  const isHealthy = dbState === 1;
+
+  const payload = {
+    status: isHealthy ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    node: process.version,
+    db: dbStatus,
+  };
+
+  res.status(isHealthy ? 200 : 503).json(payload);
+});
+
 // Streaming Chat Endpoint with RAG Integration
 app.post('/api/chat', async (req, res) => {
   const { message, repoUrl, conversationId } = req.body;
