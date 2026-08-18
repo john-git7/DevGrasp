@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────
+# Dependabot — automated dependency updates
+#
+# Creates weekly PRs to update outdated/vulnerable npm packages
+# in both the server and client, and GitHub Actions versions.
+# ─────────────────────────────────────────────────────────────
+
+version: 2
+
+updates:
+  # ── Server (Node.js / npm) ───────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    labels:
+      - "dependencies"
+      - "server"
+    # Group all minor/patch updates into one PR to reduce noise
+    groups:
+      server-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Always open individual PRs for major version bumps
+    open-pull-requests-limit: 5
+
+  # ── Client (Node.js / npm) ───────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    labels:
+      - "dependencies"
+      - "client"
+    groups:
+      client-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+
+  # ── GitHub Actions ───────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    labels:
+      - "dependencies"
+      - "github-actions"
