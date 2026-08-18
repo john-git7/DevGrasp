@@ -14,7 +14,6 @@ export default function RepoModal({
   pauseIndexing,
   skipCurrentFile,
   isSkippingFile,
-  fetchIndexedRepos,
   indexedRepos = [],
   indexError,
   setIndexError,

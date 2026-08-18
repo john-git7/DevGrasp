@@ -4,6 +4,7 @@ const QuotaTimer = ({ waitTime, message = "Pausing for quota..." }) => {
   const [timeLeft, setTimeLeft] = useState(Math.ceil(waitTime / 1000));
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTimeLeft(Math.ceil(waitTime / 1000));
     const timer = setInterval(() => {
       setTimeLeft(prev => Math.max(0, prev - 1));

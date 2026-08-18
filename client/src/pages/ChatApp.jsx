@@ -61,11 +61,11 @@ export default function ChatApp() {
   const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
 
-  const { logout, user } = useContext(AuthContext);
+  const { logout } = useContext(AuthContext);
   const [viewingFile, setViewingFile] = useState(null);
   
   // Real-time usage tracking
-  const [usageStatus, setUsageStatus] = useState(null);
+  // usageStatus state removed as it was unused
   const [isFileLoading, setIsFileLoading] = useState(false);
   
   // PR State
@@ -73,7 +73,6 @@ export default function ChatApp() {
   const [selectedPR, setSelectedPR] = useState(null);
 
   const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
   const chatContainerRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -157,10 +156,10 @@ export default function ChatApp() {
       try {
         const res = await api.get('/api/status/usage');
         if (res.status === 200) {
-          const data = res.data;
-          setUsageStatus(data);
+          // const data = res.data;
+          // usageStatus was removed
         }
-      } catch (e) {
+      } catch {
         // fail silently
       }
     };

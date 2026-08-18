@@ -80,6 +80,7 @@ export default function SettingsModal({
   // Local countdown timer
   useEffect(() => {
     if (!usage.nextRefresh) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTimeLeft(0);
       return;
     }
