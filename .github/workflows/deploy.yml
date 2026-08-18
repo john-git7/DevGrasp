@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CD Pipeline — deploys to Render.com when a push lands on main
+#
+# Prerequisites (set in GitHub → Settings → Secrets and variables → Actions):
+#   RENDER_API_KEY      : Render API key (Account Settings → API Keys)
+#   RENDER_SERVICE_ID   : Your Render service ID (from the service dashboard URL)
+#   RENDER_DEPLOY_URL   : Your deployed backend URL e.g. https://devgrasp-api.onrender.com
+#
+# How it works:
+#   1. Triggers Render's deploy hook via the REST API
+#   2. Polls /api/health every 20s for up to 5 minutes until the new deploy is live
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CD — Deploy to Render
+
+on:
+  push:
+    branches: [main]            # Only deploy from main
+
+jobs:
+  deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Render deploy
+        run: |
+          echo "Triggering Render deploy for service ${{ secrets.RENDER_SERVICE_ID }}..."
+          curl --silent --fail \
+            --request POST \
+            --url "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            --header "Accept: application/json" \
+            --header "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            --header "Content-Type: application/json" \
+            --data '{}'
+          echo "Deploy triggered."
+
+      - name: Wait for deploy and verify health
+        run: |
+          HEALTH_URL="${{ secrets.RENDER_DEPLOY_URL }}/api/health"
+          echo "Polling $HEALTH_URL for up to 5 minutes..."
+          
+          MAX_ATTEMPTS=15
+          SLEEP_SECONDS=20
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS — checking $HEALTH_URL ..."
+            
+            HTTP_STATUS=$(curl --silent --output /dev/null --write-out "%{http_code}" "$HEALTH_URL" || echo "000")
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Health check passed (HTTP 200). Deploy succeeded!"
+              exit 0
+            fi
+
+            echo "  → Got HTTP $HTTP_STATUS. Waiting ${SLEEP_SECONDS}s..."
+            sleep $SLEEP_SECONDS
+          done
+
+          echo "❌ Deploy did not become healthy within 5 minutes. Check Render dashboard."
+          exit 1
