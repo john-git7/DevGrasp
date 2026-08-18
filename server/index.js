@@ -1,3 +1,7 @@
+// Sentry MUST be initialized before all other requires
+require('./instrument');
+const Sentry = require('@sentry/node');
+
 const express = require('express');
 const dns = require('dns');
 // Override local DNS to fix SRV lookup failures on this network
@@ -816,6 +820,10 @@ Always be helpful, specific, and cite file names or line numbers when possible.`
     res.end();
   }
 });
+
+// Sentry error handler MUST be registered after all routes and before app.listen
+// It captures any errors thrown inside route handlers and sends them to Sentry
+Sentry.setupExpressErrorHandler(app);
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
