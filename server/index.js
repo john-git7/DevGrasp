@@ -40,6 +40,25 @@ const aiLimiter = rateLimit({
   max: 200 // Increased from 20
 });
 
+// GET health check — used by Render.com, UptimeRobot, and CI pipelines
+// Returns 200 if the server and database are operational, 503 otherwise.
+app.get('/api/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  // readyState: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+  const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
+  const isHealthy = dbState === 1;
+
+  const payload = {
+    status: isHealthy ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    node: process.version,
+    db: dbStatus,
+  };
+
+  res.status(isHealthy ? 200 : 503).json(payload);
+});
+
 // Apply API key authentication to all /api routes
 app.use('/api', requireApiKey);
 
@@ -55,24 +74,26 @@ app.get('/api/status/usage', (req, res) => {
 });
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, { family: 4 })
-  .then(async () => {
-    console.log('Connected to MongoDB Atlas');
-    // Clean up any stale indexing states from previous server crashes
-    try {
-      const RepoStatus = require('./models/RepoStatus');
-      const result = await RepoStatus.updateMany(
-        { status: 'indexing' },
-        { status: 'error' } // Mark as INCOMPLETE so user can resume
-      );
-      if (result.modifiedCount > 0) {
-        console.log(`Cleaned up ${result.modifiedCount} stale indexing states.`);
+if (process.env.NODE_ENV !== 'test') {
+  mongoose.connect(process.env.MONGO_URI)
+    .then(async () => {
+      console.log('Connected to MongoDB Atlas');
+      
+      // Cleanup stale indexing states on startup
+      try {
+        const RepoStatus = require('./models/RepoStatus');
+        const staleRepos = await RepoStatus.find({ status: 'indexing' });
+        for (const repo of staleRepos) {
+          repo.status = 'failed';
+          repo.error = 'Indexing was interrupted by server restart.';
+          await repo.save();
+        }
+      } catch(e) {
+        console.error('Failed to cleanup stale indexing states:', e);
       }
-    } catch(e) {
-      console.error('Failed to cleanup stale indexing states:', e);
-    }
-  })
-  .catch((err) => console.error('MongoDB connection error:', err));
+    })
+    .catch((err) => console.error('MongoDB connection error:', err));
+}
 
 const { retrieveContext } = require('./services/retriever');
 const Conversation = require('./models/Conversation');
@@ -188,24 +209,6 @@ app.get('/api/status/usage', (req, res) => {
   res.json(usageTracker.getUsage());
 });
 
-// GET health check — used by Render.com, UptimeRobot, and CI pipelines
-// Returns 200 if the server and database are operational, 503 otherwise.
-app.get('/api/health', (req, res) => {
-  const dbState = mongoose.connection.readyState;
-  // readyState: 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
-  const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
-  const isHealthy = dbState === 1;
-
-  const payload = {
-    status: isHealthy ? 'ok' : 'degraded',
-    timestamp: new Date().toISOString(),
-    uptime: Math.floor(process.uptime()),
-    node: process.version,
-    db: dbStatus,
-  };
-
-  res.status(isHealthy ? 200 : 503).json(payload);
-});
 
 // Streaming Chat Endpoint with RAG Integration
 app.post('/api/chat', async (req, res) => {
@@ -820,6 +823,11 @@ Always be helpful, specific, and cite file names or line numbers when possible.`
 // It captures any errors thrown inside route handlers and sends them to Sentry
 Sentry.setupExpressErrorHandler(app);
 
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+// Only start the server if this file is run directly (not imported in tests)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
