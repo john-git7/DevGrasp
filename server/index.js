@@ -21,7 +21,14 @@ const reposRoute = require('./routes/repos');
 const chatRoute = require('./routes/chat');
 
 // Middleware
-app.use(cors());
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(o => o.trim())
+  : '*';
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // Auth routes (unprotected inside)
