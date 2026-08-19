@@ -44,7 +44,7 @@ if (process.env.SENTRY_DSN) {
   });
 
   console.log('[Sentry] Initialized. Environment:', process.env.NODE_ENV || 'development');
-} else {
+} else if (process.env.NODE_ENV !== 'test') {
   console.warn('[Sentry] SENTRY_DSN not set — error monitoring is disabled.');
 }
 
