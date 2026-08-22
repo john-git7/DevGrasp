@@ -2,7 +2,7 @@
   "name": "server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "start": "tsx index.ts",
     "dev": "tsx watch index.ts",
@@ -28,7 +28,8 @@
     "module-details-from-path": "^1.0.4",
     "mongoose": "^9.4.1",
     "nodemon": "^3.1.14",
-    "octokit": "^5.0.5"
+    "octokit": "^5.0.5",
+    "tsx": "^4.23.12"
   },
   "overrides": {
     "protobufjs": "^7.6.3",
@@ -47,7 +48,6 @@
     "jest": "^30.4.2",
     "mongodb-memory-server": "^11.2.0",
     "supertest": "^7.2.2",
-    "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
 }
