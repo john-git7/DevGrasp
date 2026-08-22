@@ -110,4 +110,5 @@ if (require.main === module) {
   });
 }
 
+module.exports = app;
 export default app;
