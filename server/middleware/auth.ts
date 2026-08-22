@@ -1,11 +1,16 @@
-const jwt = require('jsonwebtoken');
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+export interface AuthenticatedRequest extends Request {
+  user?: any;
+}
 
 /**
  * JWT Authentication Middleware
  * Validates the Authorization Bearer token.
  * This protects all /api/* routes (except auth login/register) from unauthorized access.
  */
-function requireApiKey(req, res, next) {
+export function requireApiKey(req: AuthenticatedRequest, res: Response, next: NextFunction): void | Response {
   // Allow login and register routes to bypass auth
   if (req.path.startsWith('/auth/login') || req.path.startsWith('/auth/register')) {
     return next();
@@ -27,5 +32,3 @@ function requireApiKey(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized: Token is invalid or expired.' });
   }
 }
-
-module.exports = { requireApiKey };

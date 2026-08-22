@@ -1,8 +1,8 @@
-const { pipeline } = require('@xenova/transformers');
+import { pipeline } from '@xenova/transformers';
 
-let embedder = null;
+let embedder: any = null;
 
-async function getLocalEmbedding(textOrTexts) {
+export async function getLocalEmbedding(textOrTexts: string | string[]): Promise<any> {
   try {
     if (!embedder) {
       console.log('Loading local embedding model: Xenova/all-MiniLM-L6-v2...');
@@ -28,5 +28,3 @@ async function getLocalEmbedding(textOrTexts) {
     throw error;
   }
 }
-
-module.exports = { getLocalEmbedding };

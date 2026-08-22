@@ -1,14 +1,15 @@
-const express = require('express');
+import express, { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
+import User from '../models/User';
+import Conversation from '../models/Conversation';
+import RepoStatus from '../models/RepoStatus';
+import { requireApiKey, AuthenticatedRequest } from '../middleware/auth';
+import { encrypt } from '../utils/crypto';
+
 const router = express.Router();
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const Conversation = require('../models/Conversation');
-const RepoStatus = require('../models/RepoStatus');
-const { requireApiKey } = require('../middleware/auth');
-const { encrypt } = require('../utils/crypto');
 
 // Register new user
-router.post('/register', async (req, res) => {
+router.post('/register', async (req: Request, res: Response) => {
   const { email, password, name } = req.body;
   if (!email || !password || !name) return res.status(400).json({ error: 'All fields are required' });
 
@@ -35,14 +36,14 @@ router.post('/register', async (req, res) => {
 
     const token = jwt.sign({ id: user._id }, process.env.API_SECRET || process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '7d' });
     res.json({ token, user: { id: user._id, email: user.email, name: user.name } });
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: 'Server error during registration: ' + err.message });
   }
 });
 
 // Login user
-router.post('/login', async (req, res) => {
+router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'All fields are required' });
 
@@ -57,14 +58,14 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign({ id: user._id }, process.env.API_SECRET || process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '7d' });
     res.json({ token, user: { id: user._id, email: user.email, name: user.name } });
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: 'Server error during login: ' + err.message });
   }
 });
 
 // Get current user (protected)
-router.get('/me', requireApiKey, async (req, res) => {
+router.get('/me', requireApiKey as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -75,7 +76,7 @@ router.get('/me', requireApiKey, async (req, res) => {
 });
 
 // Save GitHub Token
-router.post('/github-token', requireApiKey, async (req, res) => {
+router.post('/github-token', requireApiKey as any, async (req: AuthenticatedRequest, res: Response) => {
   const { githubToken } = req.body;
   if (!githubToken) return res.status(400).json({ error: 'GitHub token is required' });
 
@@ -83,7 +84,7 @@ router.post('/github-token', requireApiKey, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    user.githubToken = encrypt(githubToken);
+    user.githubToken = encrypt(githubToken) as any;
     await user.save();
     
     res.json({ success: true, message: 'GitHub token saved securely.' });
@@ -93,4 +94,4 @@ router.post('/github-token', requireApiKey, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

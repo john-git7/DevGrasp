@@ -1,10 +1,16 @@
-const crypto = require('crypto');
+import crypto from 'crypto';
+
 const algorithm = 'aes-256-cbc';
 const secret = process.env.API_SECRET || process.env.JWT_SECRET || 'fallback_secret';
 // Ensure secret is 32 bytes for aes-256-cbc
 const key = crypto.createHash('sha256').update(secret).digest();
 
-function encrypt(text) {
+export interface EncryptedPayload {
+  iv: string;
+  encryptedData: string;
+}
+
+export function encrypt(text: string | null | undefined): EncryptedPayload | null {
   if (!text) return null;
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv(algorithm, key, iv);
@@ -13,14 +19,12 @@ function encrypt(text) {
   return { iv: iv.toString('hex'), encryptedData: encrypted.toString('hex') };
 }
 
-function decrypt(text) {
+export function decrypt(text: EncryptedPayload | null | undefined): string | null {
   if (!text || !text.iv || !text.encryptedData) return null;
-  let iv = Buffer.from(text.iv, 'hex');
-  let encryptedText = Buffer.from(text.encryptedData, 'hex');
+  const iv = Buffer.from(text.iv, 'hex');
+  const encryptedText = Buffer.from(text.encryptedData, 'hex');
   const decipher = crypto.createDecipheriv(algorithm, key, iv);
   let decrypted = decipher.update(encryptedText);
   decrypted = Buffer.concat([decrypted, decipher.final()]);
   return decrypted.toString();
 }
-
-module.exports = { encrypt, decrypt };

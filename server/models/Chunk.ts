@@ -1,6 +1,14 @@
-const mongoose = require('mongoose');
+import mongoose, { Document, Schema } from 'mongoose';
 
-const ChunkSchema = new mongoose.Schema({
+export interface IChunk extends Document {
+  repoUrl: string;
+  filePath: string;
+  fileSha?: string;
+  content: string;
+  embedding: number[];
+}
+
+const ChunkSchema: Schema = new Schema({
   repoUrl: { type: String, required: true },
   filePath: { type: String, required: true },
   fileSha: { type: String }, // Optional for backward compatibility, but set on new/updated chunks
@@ -11,4 +19,4 @@ const ChunkSchema = new mongoose.Schema({
 
 ChunkSchema.index({ repoUrl: 1, filePath: 1 });
 
-module.exports = mongoose.model('Chunk', ChunkSchema);
+export default mongoose.model<IChunk>('Chunk', ChunkSchema);

@@ -1,4 +1,4 @@
-async function interruptibleSleep(ms, checkCancel) {
+export async function interruptibleSleep(ms: number, checkCancel?: () => boolean | string | null): Promise<boolean | string> {
   const steps = Math.ceil(ms / 500);
   for (let i = 0; i < steps; i++) {
     const val = checkCancel && checkCancel();
@@ -8,8 +8,14 @@ async function interruptibleSleep(ms, checkCancel) {
   return false;
 }
 
+export interface RetryOptions {
+  maxRetries?: number;
+  onProgress?: ((progress: { status: string; message: string; waitTime?: number }) => void) | null;
+  checkCancel?: (() => boolean | string | null) | null;
+}
+
 // Shared retry utility that handles both simple retries and interruptible/progress-reporting retries
-async function executeWithRetry(apiCall, options = {}) {
+export async function executeWithRetry<T>(apiCall: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const { maxRetries = 3, onProgress = null, checkCancel = null } = options;
   let attempt = 0;
   
@@ -17,7 +23,7 @@ async function executeWithRetry(apiCall, options = {}) {
     try {
       if (checkCancel) {
         const apiPromise = apiCall();
-        const cancelPromise = new Promise((_, reject) => {
+        const cancelPromise = new Promise<never>((_, reject) => {
           const interval = setInterval(() => {
             const cancelVal = checkCancel();
             if (cancelVal === 'SKIP_FILE') {
@@ -34,7 +40,7 @@ async function executeWithRetry(apiCall, options = {}) {
       } else {
         return await apiCall();
       }
-    } catch (error) {
+    } catch (error: any) {
       attempt++;
       
       const cancelVal = checkCancel && checkCancel();
@@ -44,8 +50,8 @@ async function executeWithRetry(apiCall, options = {}) {
         throw new Error('JOB_CANCELLED');
       }
 
-      const isRateLimit = error.status === 429 || (error.message && error.message.includes('429'));
-      const isServiceUnavailable = error.status === 503 || (error.message && error.message.includes('503'));
+      const isRateLimit = error?.status === 429 || (error?.message && error.message.includes('429'));
+      const isServiceUnavailable = error?.status === 503 || (error?.message && error.message.includes('503'));
       
       if ((isRateLimit || isServiceUnavailable) && attempt < maxRetries) {
         let waitTime = attempt * 5000;
@@ -88,6 +94,5 @@ async function executeWithRetry(apiCall, options = {}) {
       }
     }
   }
+  throw new Error('Max retries reached');
 }
-
-module.exports = { executeWithRetry };

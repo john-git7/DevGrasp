@@ -181,15 +181,12 @@ export default function ChatApp() {
   const skipCurrentFile = async (url, filePath) => {
     setIsSkippingFile(true);
     try {
-      const res = await api.post('/api/repos/skip-file', { url, filePath });
-      if (!res.ok) {
-        throw new Error('Failed to send skip request');
-      }
+      await api.post('/api/repos/skip-file', { url, filePath });
       // Instant UI response - show "Skipping..." inside the progress text
       setIndexProgress(prev => prev ? { ...prev, isWaiting: false, message: 'Skipping file...' } : null);
     } catch (e) {
       console.error('Failed to skip file', e);
-      alert('Failed to skip file: ' + e.message);
+      alert('Failed to skip file: ' + (e.response?.data?.error || e.message));
     } finally {
       setIsSkippingFile(false);
     }
