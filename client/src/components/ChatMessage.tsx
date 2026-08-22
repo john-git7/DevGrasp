@@ -3,7 +3,18 @@ import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 
-const ChatMessage = React.memo(({ content, role, onCitationClick, status, warning, onEdit, onRetry, isLatest }) => {
+interface ChatMessageProps {
+  content: string;
+  role: string;
+  onCitationClick?: (citation: string) => void;
+  status?: string;
+  warning?: string;
+  onEdit?: (newContent: string) => void;
+  onRetry?: () => void;
+  isLatest?: boolean;
+}
+
+const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ content, role, onCitationClick, status, warning, onEdit, onRetry, isLatest }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(content);
 

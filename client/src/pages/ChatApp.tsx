@@ -89,7 +89,7 @@ export default function ChatApp() {
   const baselineInputRef = useRef('');
 
   useEffect(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return;
     const sr = new SR();
     sr.continuous = true;
@@ -249,7 +249,7 @@ export default function ChatApp() {
     setIndexProgress({ status: 'starting', repoUrl: urlToIndex });
     setIndexError(null);
     try {
-      const payload = { url: urlToIndex, embeddingModel };
+      const payload: any = { url: urlToIndex, embeddingModel };
       if (excludedExtensions !== null) {
         payload.excludedExtensions = excludedExtensions;
       }
@@ -380,7 +380,7 @@ export default function ChatApp() {
   };
 
   // Fetch PRs for selected repo
-  const fetchPRs = async (repoUrl) => {
+  const fetchPRs = async (repoUrl: string) => {
     if (!repoUrl) return;
     try {
       const res = await api.get(`/api/repos/prs?repoUrl=${encodeURIComponent(repoUrl)}`);
@@ -390,6 +390,7 @@ export default function ChatApp() {
       }
     } catch (err) {
       console.error("Failed to fetch PRs", err);
+      setOpenPRs(prev => ({ ...prev, [repoUrl]: [] }));
     }
   };
 
@@ -434,7 +435,7 @@ export default function ChatApp() {
     }
   }, [selectedRepo]);
 
-  const sendMessage = async (e, customText = null) => {
+  const sendMessage = async (e?: React.FormEvent | null, customText: string | null = null) => {
     if(e) e.preventDefault();
     const userMessage = customText || input.trim();
     if (!userMessage || isLoading) return;
@@ -452,7 +453,7 @@ export default function ChatApp() {
 
     try {
       let endpoint = `${import.meta.env.VITE_API_URL}/api/chat`;
-      let payload = { message: userMessage, repoUrl: selectedRepo, conversationId: currentConversationId, chatModel, embeddingModel };
+      let payload: any = { message: userMessage, repoUrl: selectedRepo, conversationId: currentConversationId, chatModel, embeddingModel };
 
       if (userMessage === 'Generate a Tech Debt Radar report.') {
         endpoint = `${import.meta.env.VITE_API_URL}/api/chat/tech-debt`;
@@ -618,7 +619,6 @@ export default function ChatApp() {
         pauseIndexing={pauseIndexing}
         skipCurrentFile={skipCurrentFile}
         isSkippingFile={isSkippingFile}
-        fetchIndexedRepos={fetchIndexedRepos}
         indexedRepos={indexedRepos}
         indexError={indexError}
         setIndexError={setIndexError}
@@ -631,8 +631,6 @@ export default function ChatApp() {
         indexedRepos={indexedRepos.filter(r => typeof r === 'string' || r.status === 'complete')}
         selectedRepo={selectedRepo}
         setSelectedRepo={setSelectedRepo}
-        isConversationsExpanded={isConversationsExpanded}
-        setIsConversationsExpanded={setIsConversationsExpanded}
         startNewChat={startNewChat}
         generateOnboarding={generateOnboarding}
         generateTechDebt={generateTechDebt}
@@ -806,7 +804,7 @@ export default function ChatApp() {
                 onChange={(e) => setInput(e.target.value)}
                 disabled={isLoading || !selectedRepo}
                 placeholder={!selectedRepo ? "Select a workspace to start chatting..." : "Paste your stack trace or error log here to trace the bug..."}
-                rows="2"
+                rows={2}
                 className="flex-1 bg-transparent py-2.5 px-2 focus:outline-none text-[var(--color-apple-text)] placeholder-[var(--color-apple-text)]/50 text-sm font-medium resize-none min-h-[60px]"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
