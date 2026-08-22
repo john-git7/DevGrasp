@@ -1,13 +1,28 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import api from '../lib/api';
 
-export const AuthContext = createContext();
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+}
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token') || null);
-  const [loading, setLoading] = useState(true);
+export interface AuthContextType {
+  user: User | null;
+  token: string | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
+  logout: () => void;
+}
+
+export const AuthContext = createContext<AuthContextType | null>(null);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token') || null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     if (token) {
@@ -36,22 +51,22 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (email: string, password: string) => {
     try {
       const res = await api.post('/api/auth/login', { email, password });
       setToken(res.data.token);
       setUser(res.data.user);
-    } catch (err) {
+    } catch (err: any) {
       throw new Error(err.response?.data?.error || err.message);
     }
   };
 
-  const register = async (name, email, password) => {
+  const register = async (name: string, email: string, password: string) => {
     try {
       const res = await api.post('/api/auth/register', { name, email, password });
       setToken(res.data.token);
       setUser(res.data.user);
-    } catch (err) {
+    } catch (err: any) {
       throw new Error(err.response?.data?.error || err.message);
     }
   };

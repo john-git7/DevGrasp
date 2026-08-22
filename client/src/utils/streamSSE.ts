@@ -1,24 +1,22 @@
-/**
- * Shared SSE (Server-Sent Events) streaming client utility.
- * Replaces the duplicated while(true) { reader.read() } blocks that were
- * copy-pasted across sendMessage, generateOnboarding, generateTechDebt, etc.
- *
- * @param {string} url - The endpoint URL to POST to
- * @param {object} payload - The JSON body to send
- * @param {object} headers - Extra headers (e.g. x-api-key)
- * @param {object} handlers - Callbacks for each SSE event type
- * @param {function} [handlers.onStatus] - Called with a status string
- * @param {function} [handlers.onText] - Called with each streamed text chunk
- * @param {function} [handlers.onWarning] - Called with a warning string
- * @param {function} [handlers.onError] - Called with an error string
- * @param {function} [handlers.onConversationId] - Called with the conversation ID
- * @param {function} [handlers.onDone] - Called when the stream completes
- */
-export async function streamSSE(url, payload, extraHeaders = {}, handlers = {}) {
+export interface SSEHandlers {
+  onStatus?: (status: string) => void;
+  onText?: (text: string) => void;
+  onWarning?: (warning: string) => void;
+  onError?: (error: string) => void;
+  onConversationId?: (id: string) => void;
+  onDone?: () => void;
+}
+
+export async function streamSSE(
+  url: string,
+  payload: any,
+  extraHeaders: Record<string, string> = {},
+  handlers: SSEHandlers = {}
+): Promise<void> {
   const { onStatus, onText, onWarning, onError, onConversationId, onDone } = handlers;
 
   const token = localStorage.getItem('token');
-  const headers = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...extraHeaders
   };
@@ -38,6 +36,11 @@ export async function streamSSE(url, payload, extraHeaders = {}, handlers = {}) 
       ? 'Unauthorized: Check that your API_SECRET matches between server and client .env files.'
       : `Network error (${response.status}): ${errText}`;
     if (onError) onError(errMsg);
+    return;
+  }
+
+  if (!response.body) {
+    if (onError) onError('No response body returned from server.');
     return;
   }
 
@@ -73,7 +76,7 @@ export async function streamSSE(url, payload, extraHeaders = {}, handlers = {}) 
         if (data.text && onText) onText(data.text);
         if (data.warning && onWarning) onWarning(data.warning);
         if (data.error && onError) onError(data.error);
-      } catch (err) {
+      } catch (err: any) {
         // Log parse errors instead of swallowing them silently
         console.warn('[streamSSE] Failed to parse SSE chunk:', err.message, '| raw:', dataStr);
       }
