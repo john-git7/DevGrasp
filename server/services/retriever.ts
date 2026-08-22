@@ -1,13 +1,13 @@
-const Chunk = require('../models/Chunk');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { getLocalEmbedding } = require('./localEmbedder');
+import Chunk from '../models/Chunk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getLocalEmbedding } from './localEmbedder';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY || '');
 
-async function retrieveContext(query, repoUrl = null, embeddingModel = 'gemini-embedding-001') {
+export async function retrieveContext(query: string, repoUrl: string | null = null, embeddingModel = 'gemini-embedding-001'): Promise<string> {
   try {
     const isLocal = embeddingModel === 'local-MiniLM';
-    let queryVector;
+    let queryVector: number[];
 
     if (isLocal) {
       queryVector = await getLocalEmbedding(query);
@@ -18,11 +18,8 @@ async function retrieveContext(query, repoUrl = null, embeddingModel = 'gemini-e
     }
 
     // Perform vector search in MongoDB Atlas with native pre-filtering by repoUrl.
-    // Previously this fetched 1000 candidates from ALL repos and then filtered with a $match stage,
-    // wasting up to 995 candidates from the wrong repos.
-    // Now we pass the filter directly into $vectorSearch so Atlas only scores relevant chunks.
     const indexName = isLocal ? 'LocalMiniLM' : 'Devmind';
-    const pipeline = [
+    const pipeline: any[] = [
       {
         $vectorSearch: {
           index: indexName,
@@ -50,16 +47,14 @@ async function retrieveContext(query, repoUrl = null, embeddingModel = 'gemini-e
     if (results.length === 0) return '';
 
     let contextStr = "Here are some relevant code snippets from the user's repository:\n\n";
-    results.forEach(res => {
+    results.forEach((res: any) => {
       contextStr += `--- File: ${res.filePath} ---\n${res.content}\n\n`;
     });
 
     return contextStr;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Vector Search failed:', error.message || error);
     // If search fails (e.g., index not ready), return empty context so chat still works
     return '';
   }
 }
-
-module.exports = { retrieveContext };

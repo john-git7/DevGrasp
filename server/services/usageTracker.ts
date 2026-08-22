@@ -1,4 +1,26 @@
+export interface ChatRecord {
+  timestamp: number;
+  tokens: number;
+}
+
+export interface UsageSummary {
+  chat: {
+    rpm: number;
+    tpm: number;
+    nextRefresh: number | null;
+  };
+  embeddings: {
+    rpm: number;
+    daily: number;
+  };
+}
+
 class UsageTracker {
+  chatRequests: ChatRecord[];
+  embeddingRequests: number[];
+  dailyEmbeddings: number;
+  lastReset: string;
+
   constructor() {
     this.chatRequests = []; // Array of { timestamp, tokens }
     this.embeddingRequests = []; // Array of timestamps
@@ -6,27 +28,27 @@ class UsageTracker {
     this.lastReset = new Date().toDateString();
   }
 
-  _cleanOldRecords(now) {
+  _cleanOldRecords(now: number): void {
     const oneMinuteAgo = now - 60 * 1000;
     // Remove requests older than 1 minute
     this.chatRequests = this.chatRequests.filter(req => req.timestamp > oneMinuteAgo);
     this.embeddingRequests = this.embeddingRequests.filter(ts => ts > oneMinuteAgo);
   }
 
-  _checkDailyReset(nowDate) {
+  _checkDailyReset(nowDate: Date): void {
     if (nowDate.toDateString() !== this.lastReset) {
       this.dailyEmbeddings = 0;
       this.lastReset = nowDate.toDateString();
     }
   }
 
-  trackChatRequest(tokens = 0) {
+  trackChatRequest(tokens = 0): void {
     const now = Date.now();
     this._cleanOldRecords(now);
     this.chatRequests.push({ timestamp: now, tokens });
   }
 
-  trackEmbeddingRequest() {
+  trackEmbeddingRequest(): void {
     const now = new Date();
     this._cleanOldRecords(now.getTime());
     this._checkDailyReset(now);
@@ -35,7 +57,7 @@ class UsageTracker {
     this.dailyEmbeddings++;
   }
 
-  getUsage() {
+  getUsage(): UsageSummary {
     const now = Date.now();
     this._cleanOldRecords(now);
     this._checkDailyReset(new Date(now));
@@ -45,7 +67,7 @@ class UsageTracker {
     const embeddingRpm = this.embeddingRequests.length;
 
     // Time when the oldest request will drop out of the 1-minute window
-    let nextRefresh = null;
+    let nextRefresh: number | null = null;
     if (this.chatRequests.length > 0) {
        // Oldest request is at index 0 because we push to the end
        nextRefresh = this.chatRequests[0].timestamp + 60000; 
@@ -66,4 +88,4 @@ class UsageTracker {
 }
 
 // Export a singleton instance
-module.exports = new UsageTracker();
+export default new UsageTracker();

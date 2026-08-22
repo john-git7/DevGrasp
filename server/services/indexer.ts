@@ -1,18 +1,23 @@
-const { Octokit } = require('octokit');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Chunk = require('../models/Chunk');
-const RepoStatus = require('../models/RepoStatus');
-const usageTracker = require('./usageTracker');
-const { getLocalEmbedding } = require('./localEmbedder');
-const { executeWithRetry } = require('../utils/retry');
+import { Octokit } from 'octokit';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import Chunk from '../models/Chunk';
+import RepoStatus from '../models/RepoStatus';
+import usageTracker from './usageTracker';
+import { getLocalEmbedding } from './localEmbedder';
+import { executeWithRetry } from '../utils/retry';
 
-const activeJobs = {};
+interface ActiveJob {
+  cancel: boolean;
+  skipFile?: string | null;
+}
+
+const activeJobs: Record<string, ActiveJob> = {};
 
 // Setup Octokit and Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY || '');
 
 // Helper to check if file is valid source code (ignores stream segments and hidden folders)
-function isValidSourceFile(filePath) {
+function isValidSourceFile(filePath: string): boolean {
   if (filePath.includes('node_modules') || filePath.includes('.git')) return false;
   if (filePath.match(/(^|\/)(streams|video)\//i)) return false;
   if (filePath.match(/\.(mp4|mov|mkv|webm)\//i)) return false;
@@ -21,8 +26,8 @@ function isValidSourceFile(filePath) {
 }
 
 // Helper function to split text into chunks
-function chunkText(text, maxChars = 1000) {
-  const chunks = [];
+function chunkText(text: string, maxChars = 1000): string[] {
+  const chunks: string[] = [];
   let currentChunk = '';
   const lines = text.split('\n');
   
@@ -38,8 +43,7 @@ function chunkText(text, maxChars = 1000) {
   return chunks;
 }
 
-
-async function analyzeRepository(repoUrl, userToken = null) {
+export async function analyzeRepository(repoUrl: string, userToken: string | null = null): Promise<any> {
   const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
   try {
     const urlParts = new URL(repoUrl).pathname.split('/').filter(Boolean);
@@ -47,10 +51,10 @@ async function analyzeRepository(repoUrl, userToken = null) {
     const owner = urlParts[0];
     const repo = urlParts[1].replace(/\.git$/, '');
 
-    let repoInfo;
+    let repoInfo: any;
     try {
       repoInfo = await octokit.rest.repos.get({ owner, repo });
-    } catch (err) {
+    } catch (err: any) {
       if (err.status === 404) {
         throw new Error(`Repository ${owner}/${repo} is either PRIVATE or does not exist.`);
       }
@@ -65,11 +69,11 @@ async function analyzeRepository(repoUrl, userToken = null) {
       recursive: 'true'
     });
 
-    const files = treeResponse.data.tree.filter(
+    const files = (treeResponse.data.tree as any[]).filter(
       item => item.type === 'blob' && isValidSourceFile(item.path)
     );
 
-    const extensionCounts = {};
+    const extensionCounts: Record<string, number> = {};
     for (const file of files) {
       const parts = file.path.split('.');
       const ext = parts.length > 1 ? '.' + parts.pop().toLowerCase() : '(no extension)';
@@ -96,7 +100,13 @@ async function analyzeRepository(repoUrl, userToken = null) {
   }
 }
 
-async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gemini-embedding-001', excludedExtensionsInput, userToken = null) {
+export async function indexRepository(
+  repoUrl: string,
+  onProgress: ((progress: any) => void) | null = null,
+  embeddingModel = 'gemini-embedding-001',
+  excludedExtensionsInput?: string[],
+  userToken: string | null = null
+): Promise<any> {
   const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
   // Clear any stale cancellation state from previous runs
   activeJobs[repoUrl] = { cancel: false };
@@ -112,7 +122,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     console.log(`Starting index of ${owner}/${repo}...`);
 
     let existingStatus = await RepoStatus.findOne({ repoUrl });
-    let excludedExtensions = [];
+    let excludedExtensions: string[] = [];
     if (excludedExtensionsInput !== undefined) {
       excludedExtensions = excludedExtensionsInput;
     } else if (existingStatus && existingStatus.excludedExtensions) {
@@ -125,10 +135,10 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     }, 1000);
 
     // 2. Fetch repo details to get the default branch
-    let repoInfo;
+    let repoInfo: any;
     try {
       repoInfo = await octokit.rest.repos.get({ owner, repo });
-    } catch (err) {
+    } catch (err: any) {
       clearInterval(fetchHeartbeat);
       if (err.status === 404) {
         throw new Error(`Repository ${owner}/${repo} is either PRIVATE or does not exist. You must use a public repository unless you configure a GitHub Personal Access Token.`);
@@ -155,9 +165,8 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     clearInterval(fetchHeartbeat);
 
     // Build a Map of already-indexed file paths and their SHAs.
-    // The cursor approach streams results so memory usage stays constant regardless of repo size.
-    const alreadyIndexed = new Map();
-    const indexedCursor = Chunk.aggregate([
+    const alreadyIndexed = new Map<string, string>();
+    const indexedCursor = (Chunk as any).aggregate([
       { $match: { repoUrl } },
       { $group: { _id: '$filePath', sha: { $first: '$fileSha' } } }
     ]).cursor();
@@ -165,7 +174,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
       alreadyIndexed.set(doc._id, doc.sha);
     }
 
-    let files = treeResponse.data.tree.filter(
+    let files = (treeResponse.data.tree as any[]).filter(
       item => item.type === 'blob' && isValidSourceFile(item.path)
     );
 
@@ -176,9 +185,9 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     });
 
     const totalFilesCount = files.length;
-    let filesToProcess = [];
-    let filesToDelete = [];
-    const currentPaths = new Set();
+    let filesToProcess: any[] = [];
+    let filesToDelete: string[] = [];
+    const currentPaths = new Set<string>();
     
     for (const file of files) {
       currentPaths.add(file.path);
@@ -291,7 +300,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
             }, 500);
             fetchPromise.finally(() => clearInterval(interval)).catch(() => {});
           });
-          const contentRes = await Promise.race([fetchPromise, cancelFetch]);
+          const contentRes: any = await Promise.race([fetchPromise, cancelFetch]);
           fileContent = typeof contentRes.data === 'string' ? contentRes.data : '';
         } catch (e) {
           console.warn(`Could not fetch content for ${file.path}, skipping.`);
@@ -313,7 +322,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
 
           // 5. Generate Embeddings in batches of 100
           const batchSize = 100;
-          const embeddings = [];
+          const embeddings: any[] = [];
 
           for (let j = 0; j < chunks.length; j += batchSize) {
             if (activeJobs[repoUrl] && activeJobs[repoUrl].cancel) {
@@ -353,7 +362,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
               }
             }
 
-            let batchEmbeddings;
+            let batchEmbeddings: any;
             if (isLocal) {
               const localPromise = getLocalEmbedding(chunkBatch);
               const cancelLocal = new Promise((_, reject) => {
@@ -373,14 +382,14 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
               batchEmbeddings = await Promise.race([localPromise, cancelLocal]);
             } else {
               const embeddingResult = await executeWithRetry(
-                () => model.batchEmbedContents({
+                () => (model as any).batchEmbedContents({
                   requests: chunkBatch.map(text => ({
                     content: { parts: [{ text }] }
                   }))
                 }),
                 {
                   maxRetries: 10,
-                  onProgress: (progressData) => {
+                  onProgress: (progressData: any) => {
                     RepoStatus.updateOne(
                       { repoUrl },
                       { 
@@ -401,7 +410,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
               );
 
               usageTracker.trackEmbeddingRequest(); // Tracks 1 API call per batch
-              batchEmbeddings = embeddingResult ? embeddingResult.embeddings : null;
+              batchEmbeddings = embeddingResult ? (embeddingResult as any).embeddings : null;
             }
 
             if (batchEmbeddings) {
@@ -428,7 +437,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
 
         console.log(`Indexed ${file.path}`);
         processedCount++;
-      } catch (innerError) {
+      } catch (innerError: any) {
         if (innerError.message === 'FILE_SKIPPED') {
           const skippedPath = activeJobs[repoUrl]?.skipFile || file.path;
           console.log(`Skipping file ${skippedPath} by user request during processing.`);
@@ -469,7 +478,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
     if (onProgress) onProgress({ status: 'complete', repoUrl });
     delete activeJobs[repoUrl];
     return { success: true, message: 'Indexing complete' };
-  } catch (error) {
+  } catch (error: any) {
     if (error.message === 'JOB_CANCELLED') {
       console.log(`Job cancelled for ${repoUrl} inside chunking/retry`);
       await RepoStatus.updateOne({ repoUrl }, { status: 'paused', lastUpdated: Date.now() });
@@ -491,7 +500,7 @@ async function indexRepository(repoUrl, onProgress = null, embeddingModel = 'gem
   }
 }
 
-function cancelJob(repoUrl) {
+export function cancelJob(repoUrl: string): void {
   if (activeJobs[repoUrl]) {
     activeJobs[repoUrl].cancel = true;
   } else {
@@ -499,15 +508,13 @@ function cancelJob(repoUrl) {
   }
 }
 
-function skipFile(repoUrl, filePath) {
+export function skipFile(repoUrl: string, filePath: string): void {
   if (activeJobs[repoUrl]) {
     activeJobs[repoUrl].skipFile = filePath;
   }
 }
 
 // Returns true if a job is actively running (not cancelled) for this URL
-function isJobRunning(repoUrl) {
+export function isJobRunning(repoUrl: string): boolean {
   return !!(activeJobs[repoUrl] && !activeJobs[repoUrl].cancel);
 }
-
-module.exports = { indexRepository, analyzeRepository, cancelJob, isJobRunning, skipFile };

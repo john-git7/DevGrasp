@@ -1,4 +1,4 @@
-function buildRagPrompt(context) {
+export function buildRagPrompt(context?: string): string {
   let systemPrompt = `You are DevGrasp, an expert AI coding assistant.
 You have access to the user's codebase. Use the following code snippets to answer the user's question accurately.
 If the answer is not in the snippets, just answer based on your general knowledge.
@@ -13,7 +13,7 @@ At the very end of your response, you MUST include a special line starting with 
   return systemPrompt;
 }
 
-function buildOnboardingPrompt(contextData) {
+export function buildOnboardingPrompt(contextData: string): string {
   return `You are DevGrasp, a Senior Staff Engineer.
 A new developer just joined the team. Generate a comprehensive, living onboarding document for this codebase.
 Map out the high-level architecture, explain major modules based on the file tree, and summarize the core dependencies.
@@ -23,7 +23,7 @@ Here is the codebase context:
 ${contextData}`;
 }
 
-function buildBugTracePrompt(stackTrace, contextData) {
+export function buildBugTracePrompt(stackTrace: string, contextData: string): string {
   return `You are DevGrasp, a Senior Debugging Engineer.
 The user has provided a stack trace or error message. Your job is to trace the bug, explain WHY it is happening based on the provided codebase context, and trace the function calls.
 Do not just rewrite the code to fix it. Explain the underlying system failure.
@@ -38,7 +38,7 @@ ${stackTrace}
 ${contextData}`;
 }
 
-function buildCommitStoryPrompt(owner, repo, commitCount, commitHistoryText) {
+export function buildCommitStoryPrompt(owner: string, repo: string, commitCount: number, commitHistoryText: string): string {
   return `You are DevGrasp, a Senior Technical Writer and Architect.
 I am providing you with the last ${commitCount} commits and diffs from the repository ${owner}/${repo}.
 Your task is to generate a human-readable "Commit Story" (Changelog & Architecture Decision Record).
@@ -49,7 +49,7 @@ Use Markdown with clear headers (##), bold text, and bullet points. Make it soun
 ${commitHistoryText}`;
 }
 
-function buildPRReviewPrompt(prNumber, owner, repoName, prDiff, currentContext) {
+export function buildPRReviewPrompt(prNumber: string | number, owner: string, repoName: string, prDiff: string, currentContext: string): string {
   return `You are DevGrasp, an expert Code Reviewer.
 The user is asking you about Pull Request #${prNumber} in ${owner}/${repoName}.
 I am providing you with the unified diff of the PR, and the current state of the modified files in the main branch (to help check for merge conflicts or issues).
@@ -63,11 +63,3 @@ ${currentContext.length > 50000 ? currentContext.substring(0, 50000) + '\\n...[C
 If the user asks "will it cause a merge conflict?", compare the Diff with the Current Files to see if they overlap in ways that Git cannot auto-merge.
 Always be helpful, specific, and cite file names or line numbers when possible.`;
 }
-
-module.exports = {
-  buildRagPrompt,
-  buildOnboardingPrompt,
-  buildBugTracePrompt,
-  buildCommitStoryPrompt,
-  buildPRReviewPrompt
-};
