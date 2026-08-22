@@ -1,4 +1,4 @@
-import { Octokit } from 'octokit';
+import { Octokit } from '@octokit/rest';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Chunk from '../models/Chunk';
 import RepoStatus from '../models/RepoStatus';
@@ -44,7 +44,8 @@ function chunkText(text: string, maxChars = 1000): string[] {
 }
 
 export async function analyzeRepository(repoUrl: string, userToken: string | null = null): Promise<any> {
-  const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
+  const token = userToken || process.env.GITHUB_TOKEN;
+  const octokit = new Octokit(token ? { auth: token } : {});
   try {
     const urlParts = new URL(repoUrl).pathname.split('/').filter(Boolean);
     if (urlParts.length < 2) throw new Error('Invalid GitHub URL');
@@ -107,7 +108,8 @@ export async function indexRepository(
   excludedExtensionsInput?: string[],
   userToken: string | null = null
 ): Promise<any> {
-  const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
+  const token = userToken || process.env.GITHUB_TOKEN;
+  const octokit = new Octokit(token ? { auth: token } : {});
   // Clear any stale cancellation state from previous runs
   activeJobs[repoUrl] = { cancel: false };
   const isLocal = embeddingModel === 'local-MiniLM';

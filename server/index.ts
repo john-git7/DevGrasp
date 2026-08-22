@@ -1,3 +1,4 @@
+import 'dotenv/config';
 // Sentry MUST be initialized before all other imports
 import './instrument';
 import * as Sentry from '@sentry/node';
@@ -5,10 +6,7 @@ import express, { Request, Response } from 'express';
 import dns from 'dns';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
-
-dotenv.config();
 
 // Override local DNS to fix SRV lookup failures on this network
 dns.setServers(['8.8.8.8', '8.8.4.4']);

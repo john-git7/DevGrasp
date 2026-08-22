@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Chunk from '../models/Chunk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getLocalEmbedding } from './localEmbedder';

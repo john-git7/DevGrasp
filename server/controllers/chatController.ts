@@ -1,8 +1,19 @@
 import { Request, Response } from 'express';
 import Conversation from '../models/Conversation';
 import Chunk from '../models/Chunk';
-import { Octokit } from 'octokit';
+import User from '../models/User';
+import { decrypt } from '../utils/crypto';
+import { Octokit } from '@octokit/rest';
 import { genAI, getChatModel, formatGeminiError } from '../utils/gemini';
+
+async function getUserToken(userId?: string) {
+  if (!userId) return null;
+  const user = await User.findById(userId);
+  if (user && user.githubToken && user.githubToken.encryptedData) {
+    return decrypt(user.githubToken as any);
+  }
+  return null;
+}
 import { retrieveContext } from '../services/retriever';
 import { executeWithRetry } from '../utils/retry';
 import { 
@@ -56,8 +67,11 @@ export const truncateConversation = async (req: AuthenticatedRequest, res: Respo
     const convo = await Conversation.findOne({ _id: req.params.id, userId: req.user.id });
     if (!convo) return res.status(404).json({ error: 'Not found' });
     
-    convo.messages = convo.messages.slice(0, messageIndex);
-    await convo.save();
+    const slicedMessages = convo.messages.slice(0, messageIndex);
+    await Conversation.updateOne(
+      { _id: req.params.id, userId: req.user.id },
+      { $set: { messages: slicedMessages } }
+    );
     
     res.json({ success: true });
   } catch (err) {
@@ -319,8 +333,9 @@ export const commitStory = async (req: AuthenticatedRequest, res: Response) => {
        }
     }
     repo = repo.replace(/\.git$/, '');
-
-    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+    const userToken = await getUserToken(req.user?.id);
+    const token = userToken || process.env.GITHUB_TOKEN;
+    const octokit = new Octokit(token ? { auth: token } : {});
     const commitsRes = await octokit.rest.repos.listCommits({ owner, repo, per_page: commitCount });
     const commits = commitsRes.data;
     
@@ -407,7 +422,9 @@ export const prReview = async (req: AuthenticatedRequest, res: Response) => {
     }
 
     res.write(`data: ${JSON.stringify({ status: 'Fetching PR details...' })}\n\n`);
-    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+    const userToken = await getUserToken(req.user?.id);
+    const token = userToken || process.env.GITHUB_TOKEN;
+    const octokit = new Octokit(token ? { auth: token } : {});
     const diffRes: any = await octokit.rest.pulls.get({
       owner, repo: repoName, pull_number: prNumber, mediaType: { format: 'diff' }
     });

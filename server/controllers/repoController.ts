@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Octokit } from 'octokit';
+import { Octokit } from '@octokit/rest';
 import { indexRepository, analyzeRepository, cancelJob, isJobRunning, skipFile } from '../services/indexer';
 import Chunk from '../models/Chunk';
 import RepoStatus from '../models/RepoStatus';
@@ -193,7 +193,8 @@ export const getPRs = async (req: AuthenticatedRequest, res: Response) => {
     }
     
     const userToken = await getUserToken(req.user.id);
-    const octokit = new Octokit({ auth: userToken || process.env.GITHUB_TOKEN });
+    const token = userToken || process.env.GITHUB_TOKEN;
+    const octokit = new Octokit(token ? { auth: token } : {});
     const prs = await octokit.rest.pulls.list({
       owner,
       repo: repoName,
