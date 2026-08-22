@@ -1,6 +1,7 @@
-const express = require('express');
+import express from 'express';
+import * as repoController from '../controllers/repoController';
+
 const router = express.Router();
-const repoController = require('../controllers/repoController');
 
 router.get('/indexed', repoController.getIndexedRepos);
 router.get('/file', repoController.getFile);
@@ -12,4 +13,4 @@ router.get('/status', repoController.status);
 router.delete('/delete', repoController.deleteRepo);
 router.get('/prs', repoController.getPRs);
 
-module.exports = router;
+export default router;

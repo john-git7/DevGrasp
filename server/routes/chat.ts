@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import * as chatController from '../controllers/chatController';
+import * as techDebtController from '../controllers/techDebtController';
+
 const router = express.Router();
-const chatController = require('../controllers/chatController');
-const techDebtController = require('../controllers/techDebtController');
 
 router.get('/history', chatController.getHistory);
 router.get('/conversation/:id', chatController.getConversation);
@@ -16,4 +17,4 @@ router.post('/pr-review', chatController.prReview);
 // Tech debt route
 router.post('/tech-debt', techDebtController.techDebt);
 
-module.exports = router;
+export default router;

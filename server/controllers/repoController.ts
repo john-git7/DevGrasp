@@ -1,24 +1,27 @@
-const { Octokit } = require('octokit');
-const { indexRepository, analyzeRepository, cancelJob, isJobRunning, skipFile } = require('../services/indexer');
-const Chunk = require('../models/Chunk');
-const RepoStatus = require('../models/RepoStatus');
-const User = require('../models/User');
-const Conversation = require('../models/Conversation');
-const { decrypt } = require('../utils/crypto');
+import { Request, Response } from 'express';
+import { Octokit } from 'octokit';
+import { indexRepository, analyzeRepository, cancelJob, isJobRunning, skipFile } from '../services/indexer';
+import Chunk from '../models/Chunk';
+import RepoStatus from '../models/RepoStatus';
+import User from '../models/User';
+import Conversation from '../models/Conversation';
+import { decrypt } from '../utils/crypto';
+import { AuthenticatedRequest } from '../middleware/auth';
 
-const isValidGithubUrl = (url) => {
+const isValidGithubUrl = (url: string) => {
   const pattern = /^(https?:\/\/)?(www\.)?github\.com\/[\w-]+\/[\w.-]+(\/)?$/;
   return pattern.test(url);
 };
-async function getUserToken(userId) {
+
+async function getUserToken(userId: string) {
   const user = await User.findById(userId);
   if (user && user.githubToken && user.githubToken.encryptedData) {
-    return decrypt(user.githubToken);
+    return decrypt(user.githubToken as any);
   }
   return null;
 }
 
-const getIndexedRepos = async (req, res) => {
+export const getIndexedRepos = async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ error: 'Unauthorized: User session not found' });
   }
@@ -39,8 +42,8 @@ const getIndexedRepos = async (req, res) => {
   }
 };
 
-const getFile = async (req, res) => {
-  const { repoUrl, filePath } = req.query;
+export const getFile = async (req: Request, res: Response) => {
+  const { repoUrl, filePath } = req.query as { repoUrl?: string; filePath?: string };
   if (!repoUrl || !filePath) return res.status(400).json({ error: 'repoUrl and filePath are required' });
   if (!isValidGithubUrl(repoUrl)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
 
@@ -56,7 +59,7 @@ const getFile = async (req, res) => {
   }
 };
 
-const analyze = async (req, res) => {
+export const analyze = async (req: AuthenticatedRequest, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
   if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
@@ -68,13 +71,13 @@ const analyze = async (req, res) => {
     const userToken = await getUserToken(req.user.id);
     const analysis = await analyzeRepository(url, userToken);
     res.json(analysis);
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
     res.status(500).json({ error: error.message || 'Failed to analyze repository' });
   }
 };
 
-const pause = (req, res) => {
+export const pause = (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
   
@@ -82,7 +85,7 @@ const pause = (req, res) => {
   res.json({ success: true, message: 'Pause signal sent' });
 };
 
-const skip = (req, res) => {
+export const skip = (req: Request, res: Response) => {
   const { url, filePath } = req.body;
   if (!url || !filePath) return res.status(400).json({ error: 'url and filePath are required' });
   
@@ -90,7 +93,7 @@ const skip = (req, res) => {
   res.json({ success: true, message: 'Skip signal sent' });
 };
 
-const index = async (req, res) => {
+export const index = async (req: AuthenticatedRequest, res: Response) => {
   const { url, embeddingModel, excludedExtensions } = req.body;
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'GitHub URL is required' });
   if (!isValidGithubUrl(url)) return res.status(400).json({ error: 'Invalid GitHub repository URL' });
@@ -124,8 +127,8 @@ const index = async (req, res) => {
   });
 };
 
-const status = async (req, res) => {
-  const { url } = req.query;
+export const status = async (req: Request, res: Response) => {
+  const { url } = req.query as { url?: string };
   if (!url) return res.status(400).json({ error: 'url is required' });
 
   try {
@@ -140,7 +143,7 @@ const status = async (req, res) => {
   }
 };
 
-const deleteRepo = async (req, res) => {
+export const deleteRepo = async (req: AuthenticatedRequest, res: Response) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -172,8 +175,8 @@ const deleteRepo = async (req, res) => {
   }
 };
 
-const getPRs = async (req, res) => {
-  const { repoUrl } = req.query;
+export const getPRs = async (req: AuthenticatedRequest, res: Response) => {
+  const { repoUrl } = req.query as { repoUrl?: string };
   if (!repoUrl) return res.status(400).json({ error: 'repoUrl is required' });
   try {
     let owner = '', repoName = '';
@@ -198,7 +201,7 @@ const getPRs = async (req, res) => {
       per_page: 20
     });
     
-    const prData = prs.data.map(pr => ({
+    const prData = prs.data.map((pr: any) => ({
       number: pr.number,
       title: pr.title,
       url: pr.html_url,
@@ -207,7 +210,7 @@ const getPRs = async (req, res) => {
     }));
     
     res.json(prData);
-  } catch (err) {
+  } catch (err: any) {
     console.error('Error fetching PRs:', err.message);
     if (err.status === 401 || err.status === 403 || err.message?.includes('Bad credentials')) {
       return res.status(err.status || 401).json({ 
@@ -216,16 +219,4 @@ const getPRs = async (req, res) => {
     }
     res.status(500).json({ error: 'Failed to fetch PRs: ' + err.message });
   }
-};
-
-module.exports = {
-  getIndexedRepos,
-  getFile,
-  analyze,
-  pause,
-  skip,
-  index,
-  status,
-  deleteRepo,
-  getPRs
 };

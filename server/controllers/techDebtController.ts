@@ -1,9 +1,11 @@
-const Conversation = require('../models/Conversation');
-const Chunk = require('../models/Chunk');
-const { genAI, getChatModel, formatGeminiError } = require('../utils/gemini');
-const { executeWithRetry } = require('../utils/retry');
+import { Response } from 'express';
+import { AuthenticatedRequest } from '../middleware/auth';
+import Conversation from '../models/Conversation';
+import Chunk from '../models/Chunk';
+import { genAI, getChatModel, formatGeminiError } from '../utils/gemini';
+import { executeWithRetry } from '../utils/retry';
 
-const techDebt = async (req, res) => {
+export const techDebt = async (req: AuthenticatedRequest, res: Response) => {
   const { repoUrl, chatModel } = req.body;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
 
@@ -51,7 +53,7 @@ ${fullContext}`;
       messages: [{ role: 'user', content: 'Generate a Tech Debt report for this codebase.' }]
     });
     await newConvo.save();
-    const convoId = newConvo._id.toString();
+    const convoId = (newConvo._id as any).toString();
 
     res.write(`data: ${JSON.stringify({ status: 'Generating Tech Debt Report...' })}\n\n`);
     res.write(`data: ${JSON.stringify({ conversationId: convoId })}\n\n`);
@@ -59,7 +61,7 @@ ${fullContext}`;
     const result = await executeWithRetry(() => model.generateContentStream(prompt));
 
     let fullAssistantResponse = '';
-    for await (const chunk of result.stream) {
+    for await (const chunk of (result as any).stream) {
       const chunkText = chunk.text();
       if (chunkText) {
         fullAssistantResponse += chunkText;
@@ -73,15 +75,11 @@ ${fullContext}`;
 
     res.write('data: [DONE]\n\n');
     res.end();
-  } catch (error) {
+  } catch (error: any) {
     console.error('Tech Debt Generation Error:', error);
     const activeModel = getChatModel(chatModel);
     const errMsg = formatGeminiError(error, 'Failed to generate Tech Debt report.', activeModel);
     res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
     res.end();
   }
-};
-
-module.exports = {
-  techDebt
 };
