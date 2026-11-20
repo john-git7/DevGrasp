@@ -71,6 +71,7 @@ export function useChat(selectedRepo: string | null, currentConversationId: stri
       let payload: any = {
         message: userMessage,
         repoId: selectedRepo,
+        repoUrl: selectedRepo,
         conversationId: currentConversationId,
         chatModel,
         embeddingModel,

@@ -26,10 +26,18 @@ import {
 import { AuthenticatedRequest } from '../middleware/auth';
 
 export const getHistory = async (req: AuthenticatedRequest, res: Response) => {
-  const { repoId } = req.query as { repoId?: string };
+  const repoId = (req.query.repoId || req.query.repoUrl) as string;
   if (!repoId) return res.status(400).json({ error: 'repoId is required' });
   try {
-    const conversations = await Conversation.find({ repoId, userId: req.user.id }).sort({ createdAt: -1 });
+    const cleanUrl = repoId.replace(/\.git$/, '');
+    const conversations = await Conversation.find({
+      userId: req.user.id,
+      $or: [
+        { repoId: cleanUrl },
+        { repoId: `${cleanUrl}.git` },
+        { repoId: repoId }
+      ]
+    }).sort({ createdAt: -1 });
     res.json(conversations);
   } catch (err) {
     console.error(err);
@@ -81,7 +89,8 @@ export const truncateConversation = async (req: AuthenticatedRequest, res: Respo
 };
 
 export const chat = async (req: AuthenticatedRequest, res: Response) => {
-  let { message, repoUrl, conversationId, chatModel, embeddingModel } = req.body;
+  let { message, repoUrl, repoId, conversationId, chatModel, embeddingModel } = req.body;
+  repoUrl = repoUrl || repoId;
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message is required' });
 
   message = message.trim().substring(0, 8000);
@@ -170,7 +179,8 @@ export const chat = async (req: AuthenticatedRequest, res: Response) => {
 };
 
 export const onboarding = async (req: AuthenticatedRequest, res: Response) => {
-  const { repoUrl, chatModel } = req.body;
+  let { repoUrl, repoId, chatModel } = req.body;
+  repoUrl = repoUrl || repoId;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
 
   const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
@@ -232,7 +242,8 @@ export const onboarding = async (req: AuthenticatedRequest, res: Response) => {
 };
 
 export const bugTrace = async (req: AuthenticatedRequest, res: Response) => {
-  const { repoUrl, stackTrace, chatModel } = req.body;
+  let { repoUrl, repoId, stackTrace, chatModel } = req.body;
+  repoUrl = repoUrl || repoId;
   if (!repoUrl || !stackTrace) return res.status(400).json({ error: 'Repo URL and stack trace are required' });
 
   const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
@@ -302,7 +313,8 @@ export const bugTrace = async (req: AuthenticatedRequest, res: Response) => {
 };
 
 export const commitStory = async (req: AuthenticatedRequest, res: Response) => {
-  const { repoUrl, commitCount = 20, chatModel } = req.body;
+  let { repoUrl, repoId, commitCount = 20, chatModel } = req.body;
+  repoUrl = repoUrl || repoId;
   if (!repoUrl) return res.status(400).json({ error: 'Repo URL is required' });
 
   const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });
@@ -402,7 +414,8 @@ export const commitStory = async (req: AuthenticatedRequest, res: Response) => {
 };
 
 export const prReview = async (req: AuthenticatedRequest, res: Response) => {
-  const { repoUrl, prNumber, message, conversationId, chatModel } = req.body;
+  let { repoUrl, repoId, prNumber, message, conversationId, chatModel } = req.body;
+  repoUrl = repoUrl || repoId;
   if (!repoUrl || !prNumber) return res.status(400).json({ error: 'Repo URL and PR Number are required' });
 
   const model = genAI.getGenerativeModel({ model: getChatModel(chatModel) });

@@ -18,12 +18,15 @@ export function useConversations(onMessagesLoaded?: (messages: any[]) => void) {
     }
   }, []);
 
-  const loadConversation = useCallback(async (convoId: string) => {
+  const loadConversation = useCallback(async (convoId: string, onLoad?: (messages: any[]) => void) => {
     try {
       const res = await api.get(`/api/chat/conversation/${convoId}`);
       if (res.status === 200) {
-        if (onMessagesLoaded) {
-          onMessagesLoaded(res.data.messages || []);
+        const msgs = res.data.messages || [];
+        if (onLoad) {
+          onLoad(msgs);
+        } else if (onMessagesLoaded) {
+          onMessagesLoaded(msgs);
         }
         setCurrentConversationId(convoId);
       }

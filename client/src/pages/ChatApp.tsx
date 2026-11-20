@@ -18,6 +18,7 @@ export default function ChatApp() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [viewingFile, setViewingFile] = useState<{ path: string; content: string } | null>(null);
   const [isFileLoading, setIsFileLoading] = useState(false);
 
@@ -131,6 +132,13 @@ export default function ChatApp() {
     }
   }, [selectedRepo]);
 
+  // Handle loading a previous conversation and displaying its messages
+  const handleLoadConversation = useCallback((convoId: string) => {
+    loadConversation(convoId, (msgs) => setMessages(msgs));
+    setIsHistoryOpen(false);
+    setIsWorkspaceModalOpen(false);
+  }, [loadConversation, setMessages]);
+
   return (
     <div className="flex flex-col h-[100dvh] bg-[var(--color-apple-bg)] text-zinc-100 font-sans overflow-hidden">
       {/* Top Navigation Bar */}
@@ -165,6 +173,22 @@ export default function ChatApp() {
               <span className="hidden md:inline">Log out</span>
             </button>
           </div>
+          <button
+            onClick={() => setIsHistoryOpen(true)}
+            className={`flex items-center gap-1.5 sm:gap-2 bg-[var(--color-apple-glass)] hover:bg-[var(--color-apple-glass-hover)] border border-[var(--color-apple-border)] px-2.5 sm:px-4 py-2 rounded-full text-xs font-semibold text-[var(--color-apple-text)] transition-colors ${isHistoryOpen ? 'border-[var(--color-apple-blue)] text-[var(--color-apple-blue)]' : ''}`}
+            title="Chat History"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="hidden sm:inline">History</span>
+            {conversations.length > 0 && (
+              <span className="bg-[var(--color-apple-blue)] text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                {conversations.length}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setIsWorkspaceModalOpen(true)}
             className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-2xl bg-[var(--color-apple-bg)] text-[var(--color-apple-text)] hover:bg-[var(--color-apple-bg)]/80 border border-[var(--color-apple-border)] transition-colors text-xs sm:text-sm font-bold truncate max-w-[140px] sm:max-w-xs"
@@ -220,13 +244,117 @@ export default function ChatApp() {
         generateCommitStory={generateCommitStory}
         conversations={conversations}
         currentConversationId={currentConversationId}
-        loadConversation={(id) => loadConversation(id)}
+        loadConversation={handleLoadConversation}
         deleteConversation={(id, e) => deleteConversation(id, e, () => setMessages([]))}
         openPRs={openPRs}
         setSelectedPR={setSelectedPR}
         selectedPR={selectedPR}
         deleteWorkspace={(url) => deleteWorkspace(url, () => setMessages([]))}
       />
+
+      {/* History Slide-over Drawer */}
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-[90] flex justify-end">
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in"
+            onClick={() => setIsHistoryOpen(false)}
+          />
+          <div className="relative w-full max-w-sm bg-[var(--color-apple-bg)] border-l border-[var(--color-apple-border)] h-full z-10 flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-[var(--color-apple-border)] flex items-center justify-between bg-[var(--color-apple-glass)]">
+              <div>
+                <h3 className="font-bold text-sm text-[var(--color-apple-text)] flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4 text-[var(--color-apple-blue)]">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Chat History
+                </h3>
+                <p className="text-xs text-[var(--color-apple-text-muted)] truncate max-w-[220px]">
+                  {selectedRepo ? selectedRepo.split('/').slice(-2).join('/') : 'No workspace selected'}
+                </p>
+              </div>
+              <button 
+                onClick={() => setIsHistoryOpen(false)}
+                className="p-1.5 rounded-lg text-[var(--color-apple-text-muted)] hover:text-white hover:bg-white/10 transition-colors"
+                title="Close"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Quick Action: New Chat */}
+            <div className="p-3 border-b border-[var(--color-apple-border)]/50">
+              <button
+                onClick={() => {
+                  startNewChat(() => setMessages([]));
+                  setIsHistoryOpen(false);
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-[var(--color-apple-blue)] hover:bg-[var(--color-apple-blue-hover)] text-white text-xs font-semibold transition-all shadow-md shadow-blue-500/20"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Start New Chat
+              </button>
+            </div>
+
+            {/* History List */}
+            <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+              {!selectedRepo ? (
+                <div className="p-8 text-center text-xs text-[var(--color-apple-text-muted)]">
+                  Please select a workspace to view chat history.
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[var(--color-apple-text-muted)] flex flex-col items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 opacity-40">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                  </svg>
+                  <span>No previous chats yet.</span>
+                  <span>Ask a question in chat to start one!</span>
+                </div>
+              ) : (
+                conversations.map((conv) => {
+                  const isActive = currentConversationId === conv._id;
+                  return (
+                    <div
+                      key={conv._id}
+                      className={`flex items-center justify-between p-3 rounded-xl text-xs transition-all group ${
+                        isActive
+                          ? 'bg-[var(--color-apple-blue)]/20 border border-[var(--color-apple-blue)]/40 text-[var(--color-apple-text)]'
+                          : 'bg-[var(--color-apple-glass)] hover:bg-[var(--color-apple-glass-hover)] border border-[var(--color-apple-border)] text-[var(--color-apple-text)]'
+                      }`}
+                    >
+                      <button
+                        onClick={() => handleLoadConversation(conv._id)}
+                        className="flex-1 text-left truncate pr-2"
+                        title={conv.title}
+                      >
+                        <div className="font-semibold truncate mb-1">{conv.title || 'Untitled Conversation'}</div>
+                        <div className="text-[11px] text-[var(--color-apple-text-muted)]">
+                          {new Date(conv.createdAt).toLocaleDateString()} &middot; {new Date(conv.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </button>
+                      <button
+                        onClick={(e) => deleteConversation(conv._id, e, () => {
+                          if (currentConversationId === conv._id) setMessages([]);
+                        })}
+                        className="opacity-0 group-hover:opacity-100 p-1.5 text-[var(--color-apple-text-muted)] hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                        title="Delete chat"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-3.5 h-3.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* File Viewer Modal */}
       {viewingFile && (
