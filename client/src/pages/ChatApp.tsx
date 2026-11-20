@@ -103,12 +103,13 @@ export default function ChatApp() {
     if (selectedRepo) {
       fetchConversations(selectedRepo);
       fetchPRs(selectedRepo);
-      startNewChat(() => setMessages([]));
+      setCurrentConversationId(null);
+      setMessages([]);
       setSelectedPR(null);
     } else {
       setSelectedPR(null);
     }
-  }, [selectedRepo, fetchConversations, fetchPRs, startNewChat, setMessages, setSelectedPR]);
+  }, [selectedRepo, fetchConversations, fetchPRs, setCurrentConversationId, setMessages, setSelectedPR]);
 
   // Handle citation click to show file content
   const handleCitationClick = useCallback(async (filePath: string) => {

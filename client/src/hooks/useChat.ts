@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { streamSSE } from '../utils/streamSSE';
 import api from '../lib/api';
 
@@ -38,7 +38,7 @@ export function useChat(selectedRepo: string | null, currentConversationId: stri
     scrollToBottom();
   }, [messages]);
 
-  const fetchPRs = async (repoUrl: string) => {
+  const fetchPRs = useCallback(async (repoUrl: string) => {
     if (!repoUrl) return;
     try {
       const res = await api.get(`/api/repos/prs?repoUrl=${encodeURIComponent(repoUrl)}`);
@@ -49,7 +49,7 @@ export function useChat(selectedRepo: string | null, currentConversationId: stri
       console.error('Failed to fetch PRs', err);
       setOpenPRs(prev => ({ ...prev, [repoUrl]: [] }));
     }
-  };
+  }, []);
 
   const sendMessage = async (e?: React.FormEvent | null, customText: string | null = null) => {
     if (e) e.preventDefault();
